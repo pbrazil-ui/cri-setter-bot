@@ -2,14 +2,19 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { localTimeString } from '../guardrails.js';
+import { publicListingName } from '../listings.js';
 
 const playbookPath = fileURLToPath(new URL('../../playbook/setter-playbook.md', import.meta.url));
 const loadPlaybook = () => { try { return readFileSync(playbookPath, 'utf8'); } catch { return ''; } };
 
 function listingFacts(listing) {
-  if (!listing) return 'No listing matched. Do not state any property facts; offer a call with Pierce.';
+  if (!listing) return 'No listing matched. Do not state any property facts; offer a quick call.';
+  if (listing.status && listing.status !== 'active') {
+    const st = listing.status === 'closed' ? 'SOLD' : 'UNDER CONTRACT';
+    return `- name: ${publicListingName(listing.name)}\n- status: ${st}\nThis listing is ${st}. Do not share its documents, numbers or any details, and don't discuss backup offers. Say so plainly and professionally, then ask what they're looking for (property type, size, location, price range) and say you'll send over listings that fit. Record what they tell you in qualification.criteria.`;
+  }
   const f = {
-    name: listing.name, city: listing.city, status: listing.status, asking_price: listing.asking_price,
+    name: publicListingName(listing.name), city: listing.city, status: listing.status, asking_price: listing.asking_price,
     spaces: listing.spaces, summary: listing.summary, ca_link: listing.ca_link, listing_hub: listing.hub_url,
     crexi: listing.crexi_url, ...listing.facts,
   };
@@ -21,7 +26,7 @@ function listingFacts(listing) {
 export function buildSystemPrompt({ lead, listing, mode, kb = [], openQuestions = [] }) {
   const disclosure = config.discloseAi
     ? `You are ${config.owner.name}'s AI assistant at ${config.company}. You are open about being an AI if asked.`
-    : `You text on behalf of ${config.owner.name} at ${config.company}. Never claim to be human; if asked, say you're his AI assistant.`;
+    : `You write as ${config.owner.name} of ${config.company}, in the first person ("I"). Don't mention being an assistant, an AI, or a bot. Calls are with you ("a quick call"), never "a call with Pierce". Never claim to be human and never deny being an AI: if the lead asks whether they're talking to a bot, an AI or a real person, choose action "escalate" with an empty reply_text so Pierce answers personally. Never invent personal details, experiences or opinions; you only know what's in this prompt and the tools.`;
 
   return `${disclosure}
 You are texting (SMS) with a commercial real estate lead about mobile home park / RV park listings.
@@ -65,7 +70,7 @@ ${kb.length ? kb.slice(0, 40).map((q) => `- Q: ${q.question}\n  A: ${q.answer}`)
 - action "booked" only when the lead confirms a specific day/time or says they booked via the link. Put the time in qualification.call_time.
 - action "escalate" for negotiation, terms, commission/co-broke, legal, angry leads, or anything you're not sure about. Draft a safe holding reply anyway; Pierce reviews it.
 - action "disqualify" if they're clearly not a buyer (vendor, spam, just browsing and says so). Reply politely or leave reply_text empty.
-- action "ask_pierce" when you can't answer from facts/docs/approved answers: put the lead's exact question in question_for_pierce and a short, natural holding reply in reply_text (e.g. "Good question, let me confirm that with Pierce and get right back to you."). Don't send a holding reply if one is already pending (see OPEN QUESTIONS).
+- action "ask_pierce" when you can't answer from facts/docs/approved answers: put the lead's exact question in question_for_pierce and a short, natural holding reply in reply_text (e.g. "${config.discloseAi ? 'Good question, let me confirm that with Pierce and get right back to you.' : 'Good question, let me confirm that and get right back to you.'}"). Don't send a holding reply if one is already pending (see OPEN QUESTIONS).
 - action "no_reply" if nothing needs saying (e.g. "thanks", "ok", a thumbs-up after the call is booked).`;
 }
 
@@ -113,12 +118,12 @@ export const EXTRACT_TOOL = {
   input_schema: {
     type: 'object',
     properties: {
-      is_lead: { type: 'boolean', description: 'False for marketing emails, digests, or anything that is not a single buyer inquiry.' },
+      is_lead: { type: 'boolean', description: 'True for a single buyer inquiry, or a single named person who favorited/saved the listing with their contact info shown. False for marketing emails, digests listing several people, or anything else.' },
       first_name: { type: 'string' }, last_name: { type: 'string' },
       email: { type: 'string' }, phone: { type: 'string' }, company: { type: 'string' },
       role: { type: 'string', description: 'Industry role if shown (investor, broker, etc.)' },
       property_name: { type: 'string', description: 'The listing they inquired on' },
-      action_taken: { type: 'string', description: 'e.g. requested info, downloaded OM, signed CA, called' },
+      action_taken: { type: 'string', description: 'e.g. requested info, downloaded OM, signed CA, called, favorited listing' },
       inquiry_message: { type: 'string', description: 'Their message, verbatim, if any' },
     },
     required: ['is_lead'],

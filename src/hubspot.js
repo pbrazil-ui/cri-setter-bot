@@ -2,6 +2,7 @@
 // Every function is a no-op when HUBSPOT_TOKEN is not set. Failures are logged, never thrown,
 // so a HubSpot outage never stops a lead from getting a text back.
 import { config } from './config.js';
+import { mostRestrictive } from './listings.js';
 import { db } from './db/index.js';
 import { now } from './clock.js';
 
@@ -161,23 +162,45 @@ export const addNote = safe(async (leadId, body) => {
   return true;
 });
 
-/** Pull active listings from the Sellers pipeline into the local listings table. */
+/**
+ * Bot status for a Sellers-pipeline deal. listing_status wins when set; otherwise the stage decides
+ * (most of Pierce's deals have no listing_status). BOV / Closed Lost are not listings -> null.
+ */
+export function listingStatusFor(p) {
+  const st = hs.sellerStages;
+  if (p.listing_status === 'sold') return 'closed';
+  if (p.listing_status === 'under_contract') return 'in_escrow';
+  if (p.listing_status === 'on_market' || p.listing_status === 'off_market') return 'active';
+  if (p.dealstage === st.listed) return 'active';
+  if (p.dealstage === st.underContract) return 'in_escrow';
+  if (p.dealstage === st.closedWon) return 'closed';
+  return null;
+}
+
+/** Pull listings (Listed, Under Contract, Closed Won) from the Sellers pipeline into the local listings table. */
 export const syncListingsFromHubSpot = safe(async () => {
-  const props = ['dealname', 'listing_code', 'listing_status', 'crexi_listing_url', 'ca_link', 'listing_hub_url'];
+  const props = ['dealname', 'dealstage', 'listing_code', 'listing_status', 'crexi_listing_url', 'ca_link', 'listing_hub_url'];
+  const st = hs.sellerStages;
+  const existing = new Map((await db.listListings()).map((l) => [l.hubspot_deal_id, l]));
   let after; let count = 0;
   do {
     const page = await api('POST', '/crm/v3/objects/deals/search', {
-      filterGroups: [{ filters: [
-        { propertyName: 'pipeline', operator: 'EQ', value: hs.sellersPipeline },
-        { propertyName: 'listing_status', operator: 'IN', values: ['on_market', 'off_market', 'under_contract'] },
-      ] }],
+      filterGroups: [
+        { filters: [{ propertyName: 'pipeline', operator: 'EQ', value: hs.sellersPipeline }, { propertyName: 'dealstage', operator: 'IN', values: [st.listed, st.underContract, st.closedWon] }] },
+        { filters: [{ propertyName: 'pipeline', operator: 'EQ', value: hs.sellersPipeline }, { propertyName: 'listing_status', operator: 'IN', values: ['on_market', 'off_market', 'under_contract', 'sold'] }] },
+      ],
       properties: props, limit: 100, after,
     });
     for (const d of page.results || []) {
       const p = d.properties;
+      const hsStatus = listingStatusFor(p);
+      if (!hsStatus) continue;
+      const prev = existing.get(d.id);
+      // a folder in Dropbox "02 - Under Contract" keeps it under contract even if HubSpot still says Listed
+      const status = mostRestrictive(hsStatus, prev?.facts?.dropbox_stage === 'under_contract' ? 'in_escrow' : null);
       await db.upsertListing({
-        hubspot_deal_id: d.id, listing_code: p.listing_code || null, name: p.dealname,
-        status: p.listing_status === 'under_contract' ? 'in_escrow' : 'active',
+        hubspot_deal_id: d.id, listing_code: p.listing_code || null, name: p.dealname, // no code -> buyer deals key on hubspot_deal_id
+        status,
         crexi_url: p.crexi_listing_url || null, ca_link: p.ca_link || null, hub_url: p.listing_hub_url || null,
       });
       count++;

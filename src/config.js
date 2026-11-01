@@ -50,8 +50,16 @@ export const config = {
     refreshToken: env.DROPBOX_REFRESH_TOKEN,
     allowDownload: bool(env.DROPBOX_LINKS_ALLOW_DOWNLOAD, true),
   },
-  // human pacing: replies wait a random 1-5 minutes; a burst of texts gets one answer
-  replyDelay: { minSec: num(env.REPLY_DELAY_MIN_SEC, 60), maxSec: num(env.REPLY_DELAY_MAX_SEC, 300), capSec: num(env.REPLY_DELAY_CAP_SEC, 480) },
+  // first contact: email goes out 1-2 min after the inquiry lands, the text follows ~5 min after the email
+  firstTouchDelay: { minSec: num(env.FIRST_TOUCH_DELAY_MIN_SEC, 60), maxSec: num(env.FIRST_TOUCH_DELAY_MAX_SEC, 120) },
+  textAfterEmail: { minSec: num(env.TEXT_AFTER_EMAIL_MIN_SEC, 240), maxSec: num(env.TEXT_AFTER_EMAIL_MAX_SEC, 390) },
+  // Human pacing (Pierce, Nov 1 2026: "vary the timing in seconds and minutes"). Every delay is a fresh random draw.
+  // Replies to a buyer wait 45s-5min; a burst of texts gets one answer (capped at 8 min after the first).
+  replyDelay: { minSec: num(env.REPLY_DELAY_MIN_SEC, 45), maxSec: num(env.REPLY_DELAY_MAX_SEC, 300), capSec: num(env.REPLY_DELAY_CAP_SEC, 480) },
+  // Pierce's A# answers wait 40s-3min before going out
+  pace: { minSec: num(env.PACE_MIN_SEC, 40), maxSec: num(env.PACE_MAX_SEC, 180) },
+  // never two bot texts to the same buyer closer than this; a too-soon text is pushed back a random 1-2.5x this
+  minGapSec: num(env.MIN_GAP_SEC, 45),
   autoVerifyCrexiCa: bool(env.AUTO_VERIFY_CREXI_CA, true), // Crexi says the buyer signed the CA -> unlock docs
   followupDaysDd: list(env.FOLLOWUP_DAYS_DD, ['2', '5', '10', '21']).map(Number),
   hubspot: {
@@ -70,6 +78,12 @@ export const config = {
       won: env.HUBSPOT_STAGE_WON || '1734608582',
       lost: env.HUBSPOT_STAGE_LOST || '1734608583',
     },
+    // Sellers pipeline stages (read Nov 1 2026). listing_status is blank on most deals, so the stage decides.
+    sellerStages: {
+      listed: env.HUBSPOT_SELLER_STAGE_LISTED || '1730621131',
+      underContract: env.HUBSPOT_SELLER_STAGE_UNDER_CONTRACT || '1730621132',
+      closedWon: env.HUBSPOT_SELLER_STAGE_CLOSED_WON || '1730874073',
+    },
   },
 
   owner: {
@@ -79,11 +93,14 @@ export const config = {
     email: env.OWNER_EMAIL || 'pbrazil@cribrokerage.com', // full Morning Broker Brief goes here
   },
   company: env.COMPANY_NAME || 'CRI Brokerage',
+  companyShort: env.COMPANY_SHORT || 'CRI', // how Pierce says it in a text: "this is Pierce over at CRI"
   bookingLink: env.BOOKING_LINK || '',
   callWindows: env.CALL_WINDOWS || 'weekdays 9-10am or 2-4:30pm Pacific',
 
-  // California bot-disclosure law (B&P 17940-17943): keep this on unless counsel says otherwise
-  discloseAi: bool(env.DISCLOSE_AI, true),
+  // Pierce's decision (Nov 1 2026): messages go out as him ("this is Pierce over at CRI"), with no AI
+  // announcement. The bot still never claims to be human: "are you a bot?" goes to Pierce (guardrails.js).
+  // Set DISCLOSE_AI=true to switch back to "Pierce Brazil's AI assistant". Have counsel review (Cal. B&P 17941).
+  discloseAi: bool(env.DISCLOSE_AI, false),
 
   timezone: env.TIMEZONE || 'America/Los_Angeles',
   briefHour: num(env.BRIEF_HOUR, 7), briefMinute: num(env.BRIEF_MINUTE, 30), // Morning Broker Brief, local time

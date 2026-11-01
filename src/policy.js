@@ -18,8 +18,8 @@ export function policies() {
 export const _setPoliciesForTest = (p) => { cache = p; pinned = true; };
 
 /** Map a delivery to its policy key. */
-export function classify({ kind, lead, flags = {}, decision = {}, human = false }) {
-  const email = lead.preferred_channel === 'email' || (!lead.phone && lead.email);
+export function classify({ kind, lead, flags = {}, decision = {}, human = false, channel }) {
+  const email = channel ? channel === 'email' : (lead.preferred_channel === 'email' || (!lead.phone && lead.email));
   if (kind === 'first_touch') return email ? 'first_touch.email' : `first_touch.${lead.source || 'manual'}`;
   if (kind === 'followup') return lead.status === 'in_dd' ? 'followup.in_dd' : 'followup.pre_ca';
   if (kind === 'answer') return 'answer.from_pierce';

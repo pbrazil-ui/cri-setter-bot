@@ -28,7 +28,10 @@ export const isStartKeyword = (text) => /^\s*(start|unstop)\s*$/i.test(String(te
 
 // Anything touching price negotiation, terms, contracts, or legal goes to Pierce before a reply is sent.
 const HUMAN_TOPICS = /\b(offer|loi|letter of intent|counter|best (and final|price)|lowest|bottom line|take less|discount|seller (carry|financ\w*)|owner (carry|financ\w*)|carry back|terms|cap rate is wrong|attorney|lawyer|lawsuit|sue|complain\w*|escrow|contract|commission|co-?broke|referral fee|buyer'?s? broker|exclusive)\b/i;
-export const needsHuman = (text) => HUMAN_TOPICS.test(String(text || ''));
+// "Is this a bot?" Pierce answers that himself; the bot never claims to be human and never denies being AI.
+const IDENTITY_QUESTION = /\b(are you (an? )?(bot|robot|ai|a\.i\.|real( person)?|human|automated|computer)|is this (an? )?(bot|robot|ai|automated|real person|computer|recording)|am i (talking|texting|speaking|chatting) (to|with) (an? )?(bot|robot|ai|real person|human|person|computer)|chat ?gpt|artificial intelligence)\b/i;
+export const asksIfBot = (text) => IDENTITY_QUESTION.test(String(text || ''));
+export const needsHuman = (text) => HUMAN_TOPICS.test(String(text || '')) || asksIfBot(text);
 
 function localParts(date, tz) {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(date);

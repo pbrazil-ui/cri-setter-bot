@@ -3,7 +3,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 Object.assign(process.env, {
-  NODE_ENV: 'test', POLICY_TEST_MODE: '0', DB_MODE: 'memory', SMS_MODE: 'mock', LLM_MODE: 'mock',
+  NODE_ENV: 'test', FIRST_TOUCH_DELAY_MIN_SEC: '0', FIRST_TOUCH_DELAY_MAX_SEC: '0', TEXT_AFTER_EMAIL_MAX_SEC: '0', PACE_MAX_SEC: '0', MIN_GAP_SEC: '0', POLICY_TEST_MODE: '0', DB_MODE: 'memory', SMS_MODE: 'mock', LLM_MODE: 'mock',
   INGEST_SECRET: 'test', OWNER_PHONE: '+19495550000', HUBSPOT_TOKEN: 'fake', BOOKING_LINK: '',
   AUTO_SEND_SOURCES: 'listing_email,inbound_sms,webhook', REPLY_DELAY_MAX_SEC: '0', DROPBOX_MODE: 'off',
 });
@@ -84,9 +84,11 @@ test('Crexi email -> instant first text -> HubSpot deal in New Buyer', async () 
   assert.ok(r.created);
   assert.ok(r.firstTouch.sent);
   const text = lastTo('+15305550101');
-  assert.match(text, /Hi Jane, this is Pierce Brazil's AI assistant at CRI Brokerage/);
-  assert.match(text, /Hidden Harbor Marina & RV Park/);
-  assert.match(text, /Reply STOP to opt out/);
+  // Pierce's voice (Nov 1 2026): as Pierce, no AI announcement, no STOP line, one qualifying question
+  assert.match(text, /^Hey Jane, this is Pierce over at CRI\. Saw your inquiry on Hidden Harbor Marina & RV Park on Crexi\./);
+  assert.match(text, /Here's the CA for the OM and financials: https:\/\/example\.com\/ca/);
+  assert.match(text, /buying on your own or with a group\?$/);
+  assert.ok(!/STOP|opt out|\bAI\b|assistant/i.test(text), text);
   const lead = await db.findLeadByPhone('+15305550101');
   assert.equal(lead.status, 'contacted');
   assert.equal(lead.listing_code, 'HARBOR-2026');
@@ -103,7 +105,7 @@ test('email from an unknown sender is ignored', async () => {
 test('full conversation: qualify -> book -> deal moves to Qualified, Pierce alerted', async () => {
   await ingestEmail(crexiEmail());
   await sms('+15305550101', 'Me and a partner, paying cash');
-  assert.match(lastTo('+15305550101'), /15-min call with Pierce/);
+  assert.match(lastTo('+15305550101'), /quick 15-min call/);
   let lead = await db.findLeadByPhone('+15305550101');
   assert.equal(lead.status, 'qualified');
   await sms('(530) 555-0101', 'Tuesday at 10am works');
@@ -155,7 +157,7 @@ test('quiet hours: first text waits for the morning window', async () => {
   assert.equal(mockOutbox.length, 0);
   setNow('2026-11-04T16:05:00Z'); // Wed 8:05am PST
   await tick();
-  assert.match(lastTo('+15305550101'), /Hi Jane/);
+  assert.match(lastTo('+15305550101'), /^Hey Jane/);
 });
 
 test('follow-up cadence: day 1, day 3, day 7, then closed as no_response', async () => {
@@ -231,7 +233,7 @@ Selling an RV park, RV, or RV lot? Advertise on RvParkStore.com for maximum expo
   assert.equal(lead.platform, 'rvparkstore');
   assert.equal(lead.listing_code, 'LIGHTHOUSE-2026');
   assert.equal(lead.first_name, 'Test');
-  assert.match(lastTo('+15552010199'), /Saw your inquiry on California Lighthouse Resort on RVParkStore\./);
+  assert.match(lastTo('+15552010199'), /Saw your inquiry on Lighthouse Resort on RVParkStore\./); // the name the buyer saw
   assert.match(hsState.deals[lead.hubspot_deals['LIGHTHOUSE-2026']].dealname, /Test Buyer – California Lighthouse Resort/);
 });
 
@@ -240,5 +242,5 @@ test('LoopNet and website-form leads; forwarded email still detected by body', a
   assert.match(lastTo('+15305550101'), / on LoopNet\./);
   await ingestEmail({ From: 'pbrazil@cribrokerage.com', Subject: 'Fwd: New form submission', TextBody: 'Forwarded from HubSpot\nName: Web Lead\nEmail: web@example.com\nPhone: 555-201-0200\nProperty: Hidden Harbor' });
   const t = lastTo('+15552010200');
-  assert.match(t, /Saw your inquiry on Hidden Harbor Marina & RV Park\. Are you/); // no platform named
+  assert.match(t, /Saw your inquiry on Hidden Harbor\. Here's the CA/); // no platform named; the buyer's own wording
 });

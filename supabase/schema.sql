@@ -60,6 +60,8 @@ create table if not exists leads (
   raw jsonb
 );
 create index if not exists leads_status_next on leads (status, next_action_at);
+-- Nov 1 2026: email-then-text first contact. Safe to re-run this whole file.
+alter table leads add column if not exists first_email_at timestamptz; -- first-contact email sent/drafted/queued; the text follows
 create index if not exists leads_email on leads (lower(email));
 
 create table if not exists messages (

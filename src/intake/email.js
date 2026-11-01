@@ -22,18 +22,23 @@ export function normalizeEmailPayload(p = {}) {
   return { subject, text, from, listingUrl };
 }
 
+const FAVORITE = /\b(favorited|favourited|added (it |this listing |your listing )?to (their |his |her )?favou?rites|saved (your|this|the) (listing|property)|listing (was )?saved)\b/i;
+
 export async function ingestEmail(payload) {
   const { subject, text, from, listingUrl } = normalizeEmailPayload(payload);
   const platform = detectPlatform(from, subject, text);
   if (config.requireKnownPlatform && (!platform || !config.leadPlatforms.includes(platform))) return { ignored: 'unknown_platform' };
   const ex = await extractLeadFromEmail({ subject, text: text.slice(0, 12000) });
   if (!ex?.is_lead) return { ignored: 'not_a_lead' };
+  // "Someone favorited/saved your listing" (LoopNet etc.): a lead, but not an inquiry. The email goes per policy;
+  // the text waits for Pierce's Y (first_touch.favorite) because saving a listing isn't asking to be texted.
+  const favorited = !ex.inquiry_message && (FAVORITE.test(`${subject}\n${text.slice(0, 2000)}`) || /favorit|saved/i.test(ex.action_taken || ''));
   const result = await upsertIncomingLead({
     first_name: ex.first_name, last_name: ex.last_name, email: ex.email, phone: ex.phone,
     company: ex.company, role: ex.role, property_name: ex.property_name, crexi_url: listingUrl, platform,
     inquiry: [ex.action_taken, ex.inquiry_message].filter(Boolean).join(': '),
     raw: { subject, from },
-  }, 'listing_email');
+  }, favorited ? 'favorite' : 'listing_email');
   // Crexi runs its own CA. "Signed CA" activity from Crexi unlocks confidential docs.
   if (result.lead && platform === 'crexi' && config.autoVerifyCrexiCa && /sign/i.test(ex.action_taken || '') && /\bca\b|confidential/i.test(ex.action_taken || '')) {
     result.lead = await db.updateLead(result.lead.id, { ca_verified: true });

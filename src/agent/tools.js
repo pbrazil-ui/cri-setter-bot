@@ -20,9 +20,14 @@ export const AGENT_TOOLS = [
 const caLocked = (listing) => ({ locked: true, message: 'Confidential until the CA is signed and Pierce has verified it.', ca_link: listing?.ca_link || null });
 
 /** ctx = { lead, listing, flags: { usedSensitive, links: [], needsAttachment: [] } } */
+const offMarket = (listing) => ({
+  unavailable: true, status: listing.status,
+  message: `This listing is ${listing.status === 'closed' ? 'sold' : 'under contract'}. Do not share its documents, numbers or details. Say so plainly and ask what they're looking for (property type, size, location, price range) so Pierce can share listings that fit.`,
+});
+
 export function makeExecutors(ctx) {
   const { lead, listing } = ctx;
-  return {
+  const ex = {
     async search_documents({ query }) {
       if (!listing) return { results: [], note: 'No listing matched for this lead.' };
       const visible = await db.listChunks(listing.id, visibleTiers(lead));
@@ -75,13 +80,18 @@ export function makeExecutors(ctx) {
       if (!doc || doc.listing_id !== listing?.id || !allowed.includes(doc.tier)) return { error: 'Not allowed to send that document to this lead.' };
       try {
         const link = await viewLink(doc.dropbox_id);
-        if (!link.public) { ctx.flags.needsAttachment.push(doc); return { ok: false, reason: 'Dropbox policy made this link team-only. Tell the lead Pierce will email it; do not include a link.' }; }
+        if (!link.public) { ctx.flags.needsAttachment.push(doc); return { ok: false, reason: 'Dropbox policy made this link team-only. Tell the lead it is coming by email; do not include a link.' }; }
         ctx.flags.links.push({ doc: doc.filename, url: link.url });
         return { ok: true, url: link.url, name: doc.filename };
       } catch (e) {
         ctx.flags.needsAttachment.push(doc);
-        return { ok: false, reason: `Link failed (${e.message}). Tell the lead Pierce will email it.` };
+        return { ok: false, reason: `Link failed (${e.message}). Tell the lead it's coming by email.` };
       }
     },
   };
+  // Under contract / sold: no documents, numbers or past correspondence for that listing, whatever the CA status.
+  if (listing && listing.status && listing.status !== 'active') {
+    for (const k of ['search_documents', 'rent_roll_stats', 'financial_summary', 'prior_conversations', 'list_documents', 'get_document_link']) ex[k] = async () => offMarket(listing);
+  }
+  return ex;
 }

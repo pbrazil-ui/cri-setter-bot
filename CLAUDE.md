@@ -37,7 +37,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - `src/db/` `supabase.js` (prod) / `memory.js` (tests), same interface · `supabase/schema.sql`
 
 ## Commands
-- `npm install && npm test` (32 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
+- `npm install && npm test` (44 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
 - `npm run dev` local server, all mocks, :3000
 - `curl -X POST "$PUBLIC_URL/admin/sync-docs?key=$INGEST_SECRET"` force a Dropbox sync
 - `curl -X POST "$PUBLIC_URL/api/ask?key=..." -d '{"listing":"Lighthouse","question":"unit mix?","ca_verified":true}'` test the document brain
@@ -56,27 +56,29 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 6. Numbers come from `rentRollStats`, `summarizeFinancials`, `calculate`. The model never does arithmetic.
 7. Unknown answer → `ask_pierce`, never a guess. One holding reply per open question.
 8. HubSpot: bot never touches deals at/after Offer Out, never moves backward, only auto-closes from New buyer (opt-outs excepted).
-9. AI disclosure on (`DISCLOSE_AI=true`, Cal. B&P §17941). No signatures in email bodies in draft mode (Outlook adds Pierce's). Dylan always cc'd.
+9. Voice (Pierce's decision, Nov 1 2026): messages go out as Pierce ("this is Pierce over at CRI"), `DISCLOSE_AI=false`, no "Reply STOP" line. Honesty floor in code: the bot never claims to be human; "are you a bot?" is a human-only topic (`asksIfBot` in guardrails.js) and goes to Pierce. Counsel should review (Cal. B&P §17941). No signatures in email bodies in draft mode (Outlook adds Pierce's). Dylan always cc'd.
 10. Uploaded CSV lists are not auto-sent (TCPA). Fresh inquiries are.
-11. Replies are paced 1–5 min (`REPLY_DELAY_*`); bursts collapse into one answer. Don't "optimize" this away.
+11. Human pacing (Pierce: "vary the timing in seconds and minutes"): replies 45s–5min random (`REPLY_DELAY_*`), bursts collapse into one answer, A# answers 40s–3min (`PACE_*`), never two texts to one buyer <45s apart (`MIN_GAP_SEC`). First contact: email 1–2 min after the inquiry (`FIRST_TOUCH_DELAY_*`), text 4–6 min after the email (`TEXT_AFTER_EMAIL_*`). Don't "optimize" this away.
+13. Listings under contract or sold: no documents/numbers/past correspondence (tools.js), first contact says so and asks criteria, Pierce gets a MATCH text. Seller names never reach buyers: `publicListingName()` strips "Seller Name - " from HubSpot deal names; buyer-facing text uses the platform's property name first.
 12. One Railway replica. Tests never hit real services. Add a test for every behavior change.
 
 ## HubSpot facts (Pierce's portal, read Oct 31 2026)
 - Buyers pipeline `1100542670`: New buyer `1734608578` → Qualified `4502497982` → Offer Out `1734608577` → Under Contract `1734608579` → Closed Won `1734608582` / Closed Lost `1734608583`
-- Sellers pipeline `1100540605` = listings. Props used: `listing_code`, `listing_status`, `crexi_listing_url`, `ca_link`, `om_link`, `listing_hub_url`. Closed Lost needs `lost_reason_category`.
+- Sellers pipeline `1100540605` = listings. Stages: BOV `1730621130` · Listed `1730621131` · Under Contract `1730621132` · Closed Won `1730874073` · Closed Lost `1730874074`. `listing_status` is blank on nearly every deal (Nov 1 2026), so `listingStatusFor()` uses the stage; Listed/Under Contract/Closed Won are imported. Many deal names include the seller ("Boon Chan - Hacienda Mobile Park"). Props used: `listing_code`, `listing_status`, `crexi_listing_url`, `ca_link`, `om_link`, `listing_hub_url`. Closed Lost needs `lost_reason_category`.
 
 ## Dropbox facts (Pierce's team space, read Oct 31 2026)
 - Listings: `/Brokerage/01 - Brokerage/Deals/01 - Listed/<Park Name - City, ST>/` (some are shared-folder mounts). Also `02 - Under Contract`, `03 - Pursuits`, `04 - Closed`, `05 - Dead`, `00 - Property Template`.
 - Inside a listing (Lighthouse layout): `00 - OM`, `01 - Financials/<year>`, `03 - Leases`, `04 - Rules, Permits & Licenses`, `06 - Property Taxes`, `07 - Photos`, `08 - Seller QA`, `09 - Insurance`, `10 - Water System, Septic & Utilities`, `11 - Inspections, Compliance & Hazardous Materials`, `12 - Capital Improvements`, `13 - Operations & Employment`, `14 - Financing`, `zz - Archive`. Template folders use `03 - Due Diligence/02 - Rent Roll w Move-In Dates`, `.../11 - Trailing 12 Month P&L`, `.../24 - Seller Questionnaire & Answers`.
 - SOPs: `/Brokerage/04 - SOP's/Deal Flow & Execution/` (Buyer Qualification checklist, ICP guide, scripts). Loaded as `internal` tier: guides the bot, never quoted to leads.
-- Folder names map to listings by fuzzy match on the HubSpot deal name (`src/listings.js`). Unmatched folders are logged; fix by setting `listings.dropbox_path` or adding an alias.
+- Folder names map to listings by fuzzy match on the HubSpot deal name (`src/listings.js`). A `01 - Listed` folder with no HubSpot match becomes an active listing of its own (Pierce: "if HubSpot doesn't have it, use Dropbox"); a `02 - Under Contract` folder marks its listing under contract. Status = most restrictive of HubSpot listing_status, HubSpot stage, Dropbox folder. Walnut Estates moved to `02 - Under Contract` on Nov 1 2026 at Pierce's request.
+- LoopNet/Crexi "saved your listing" emails become `source: 'favorite'` leads: email per `first_touch.email`, text needs Pierce's Y (`first_touch.favorite`).
 
 ## Open TODOs (in order)
 1. ~~`npm install`, lockfile, `npm test`~~ done Nov 1 2026. Dropbox path-root verified via MCP: team root namespace is `12987598657` (what `users/get_current_account` returns, which `src/dropbox.js` uses); `/Brokerage/01 - Brokerage/Deals/01 - Listed` resolves under it. `15100856355` is the Brokerage shared folder itself, not the root.
 2. Pierce fills `CONTEXT-NEEDED.md` + the TODOs in `playbook/setter-playbook.md`.
 3. Deploy per README. Run `/admin/sync-docs`, check logs for unmatched folders and failed files.
 4. Inbound email replies (Phase 2 of the master spec): Graph change-notification webhook → `handleInboundEmail` (mirror of `handleInboundSms`, set `email_last_message_id` so replies thread). Not built yet; today email is outbound + Outlook drafts.
-5. Mark listings closed when HubSpot `listing_status` = sold; sync `02 - Under Contract` folders too.
+5. ~~Mark listings closed / sync `02 - Under Contract`~~ done Nov 1 2026 (stage + Dropbox). Still open: `04 - Closed` folders.
 6. HubSpot meetings webhook → mark `booked` automatically.
 7. Weekly digest to Pierce: open questions, pending approvals, leads gone quiet, qa_bank growth.
 8. Feedback loop: diff Pierce's `E#` edits against drafts, surface recurring changes as playbook suggestions (never auto-edit the playbook).

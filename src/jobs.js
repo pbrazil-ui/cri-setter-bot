@@ -19,11 +19,8 @@ export async function tick() {
   running = true;
   try {
     await sendDueScheduled();
-    if (inWindow(config.sendWindow)) {
-      const batch = await db.listLeadsForFirstTouch(config.firstTouchPerTick);
-      for (const lead of batch) await processFirstTouch(lead);
-      if (!(await isPaused())) await runFollowups();
-    }
+    await firstTouchPass();
+    if (inWindow(config.sendWindow) && !(await isPaused())) await runFollowups();
     return { ok: true };
   } catch (e) {
     console.error('[tick]', e);
@@ -45,12 +42,24 @@ async function syncListings() {
   if (n !== null) console.log(`[listings] synced ${n} from HubSpot`);
 }
 
+/** New inquiries whose 1-2 min (email) or +5 min (text) mark has come due. Emails go any hour; texts wait for the send window. */
+async function firstTouchPass() {
+  for (const lead of await db.listLeadsForFirstTouch(config.firstTouchPerTick)) await processFirstTouch(lead);
+}
+
+let touching = false;
+export async function firstTouchTick() {
+  if (touching) return;
+  touching = true;
+  try { await firstTouchPass(); } catch (e) { console.error('[firstTouchTick]', e); } finally { touching = false; }
+}
+
 let replying = false;
 /** Fast loop: paced replies that have come due. */
 export async function replyTick() {
   if (replying) return [];
   replying = true;
-  try { return await processDueReplies(); } catch (e) { console.error('[replyTick]', e); return []; } finally { replying = false; }
+  try { await sendDueScheduled(); return await processDueReplies(); } catch (e) { console.error('[replyTick]', e); return []; } finally { replying = false; }
 }
 
 let syncing = false;
@@ -96,6 +105,7 @@ export function startJobs() {
   setTimeout(() => importEmailHistory().then((r) => r && console.log('[email history]', JSON.stringify(r))).catch((e) => console.error('[email history]', e.message)), 120 * 1000);
   setInterval(expireTick, 10 * 60 * 1000);
   setInterval(replyTick, 20 * 1000);
+  setInterval(firstTouchTick, 20 * 1000);
   setInterval(docSync, 3600 * 1000);
   setTimeout(docSync, 60 * 1000); // after HubSpot listings sync
   renewSubscription();

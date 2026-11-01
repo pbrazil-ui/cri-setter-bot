@@ -1,11 +1,25 @@
 {
-  "_note": "First-touch texts (no AI involved, so they're predictable). Placeholders: {first} {who} {property} {platform} (becomes ' on Crexi', ' on LoopNet', or nothing). Keep 'Reply STOP to opt out.' email_first_touch is used when the lead has no phone (no STOP line; Outlook adds the signature).",
-  "listing_email": "Hi{first}, this is {who}. Saw your inquiry on {property}{platform}. Are you buying for yourself or with a group? Reply STOP to opt out.",
-  "csv": "Hi{first}, this is {who}. Following up on your interest in {property}. Are you still looking at parks right now? Reply STOP to opt out.",
-  "webhook": "Hi{first}, this is {who}. Saw your inquiry on {property}{platform}. Are you buying for yourself or with a group? Reply STOP to opt out.",
-  "default": "Hi{first}, this is {who}. Thanks for your interest in {property}. Are you buying for yourself or with a group? Reply STOP to opt out.",
+  "_note": "First-contact messages (fixed wording, no AI involved). Pierce's standard (Nov 1 2026): the buyer gets the email with links 1-2 min after the inquiry, then a text 4-6 min later pointing them to it, with one qualifying question. Written as Pierce. No 'Reply STOP' line (replies to the buyer's own inquiry, not cold outreach; STOP/opt-out words are still honored in code). No AI announcement. Placeholders: {first} {who} {property} {platform} (' on Crexi' etc.) {availability} ('under contract' / 'sold') {details} (email links block) {sms_link} (CA link sentence for text-only leads).",
+  "who_plain": "{ownerFirst} over at {companyShort}",
   "who_ai": "{owner}'s AI assistant at {company}",
-  "who_plain": "{ownerFirst}'s office at {company}",
-  "property_fallback": "one of our park listings",
-  "email_first_touch": "Hi{first},\n\nSaw your inquiry on {property}{platform}. Happy to send over the details. Quick question so I point you to the right materials: are you buying for yourself or with a group, and do you own parks today?\n\nThanks,"
+  "property_fallback": "one of our listings",
+
+  "sms_after_email": "Hey{first}, this is {who}. Just sent you an email with the info on {property}, so check your inbox when you get a chance. Let me know if you need anything else. Are you buying on your own or with a group?",
+  "listing_email": "Hey{first}, this is {who}. Saw your inquiry on {property}{platform}.{sms_link} What's the best email to send you the details? And are you buying on your own or with a group?",
+  "webhook": "Hey{first}, this is {who}. Saw your inquiry on {property}{platform}.{sms_link} What's the best email to send you the details? And are you buying on your own or with a group?",
+  "default": "Hey{first}, this is {who}. Thanks for your interest in {property}.{sms_link} What's the best email to send you the details? And are you buying on your own or with a group?",
+  "csv": "Hey{first}, this is {who}. Following up on your interest in {property}. Still looking at parks right now?",
+  "sms_link": " Here's the CA for the OM and financials: {ca_link}",
+
+  "favorite_after_email": "Hey{first}, this is {who}. Saw you saved {property}{platform} and sent you an email with the details, so check your inbox when you get a chance. Are you buying on your own or with a group?",
+  "favorite": "Hey{first}, this is {who}. Saw you saved {property}{platform}. Want me to send over the details? What's the best email?",
+
+  "sms_unavailable": "Hey{first}, this is {who}. Thanks for your inquiry on {property}. That one is {availability}, but I have other listings I can share. What are you looking for?",
+
+  "email_first_touch": "Hi{first},\n\nThanks for your inquiry on {property}{platform}.{details}\n\nA few quick questions so I can get you the right information: are you buying on your own or with a group, do you own parks today, and how are you planning to finance?\n\nLet me know if you need anything else.\n\nThanks,",
+  "email_favorite": "Hi{first},\n\nSaw you saved {property}{platform}, so I wanted to send over the details.{details}\n\nA couple quick questions so I send the right information: are you buying on your own or with a group, and what size and location are you focused on?\n\nThanks,",
+  "email_unavailable": "Hi{first},\n\nThanks for reaching out about {property}. It's {availability} right now, but I have other listings I can share.\n\nWhat are you looking for in terms of property type, size and location? I'll send over anything that fits.\n\nThanks,",
+  "email_details_summary": "\n\n{summary}",
+  "email_details_link": "\n\n{label}: {url}",
+  "email_details_ca": "\n\nThe CA is here, and once it's signed I'll send the OM, rent roll and financials: {ca_link}"
 }

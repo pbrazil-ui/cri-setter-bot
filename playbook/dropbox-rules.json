@@ -1,6 +1,8 @@
 {
   "_note": "How the bot treats files in each listing's Dropbox folder. First matching rule wins (case-insensitive regex on the path inside the listing folder). tier: public = anyone; ca = only after CA verified; sensitive = bot may read but any answer using it needs Pierce's Y; exclude = never loaded.",
   "listings_root": "/Brokerage/01 - Brokerage/Deals/01 - Listed",
+  "under_contract_root": "/Brokerage/01 - Brokerage/Deals/02 - Under Contract",
+  "_listing_status": "A listing's status is the MOST restrictive of: HubSpot listing_status, HubSpot Sellers stage, and the Dropbox folder (02 - Under Contract = under contract). A 01 - Listed folder with no HubSpot match becomes an active listing on its own.",
   "sop_root": "/Brokerage/04 - SOP's",
   "max_file_mb": 25,
   "rules": [

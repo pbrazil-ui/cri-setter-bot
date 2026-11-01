@@ -33,7 +33,7 @@ Ordered by impact. 1–6 block go-live. The rest make it sound like you and answ
     employment → never loaded). Change anything you'd handle differently.
 
 ## Decisions only you can make
-14. Auto-send or approve-first for fresh inquiries? Default: auto. Recommendation: approve-first for 2 weeks, then flip.
+14. ~~Auto-send or approve-first?~~ Pierce (Nov 1): email then text, automatic. test_mode stays on until he says otherwise.
 15. Email: leave drafts in Outlook for you to send (default) or send automatically after the approval gate?
 16. Should Crexi's "signed CA" activity unlock documents automatically (default yes), or only your `CA#` text?
 17. Reply pacing: 1–5 minutes, bursts combined, 8-minute cap. Keep?
@@ -41,8 +41,8 @@ Ordered by impact. 1–6 block go-live. The rest make it sound like you and answ
 19. Duplicate-deal risk: do any existing HubSpot workflows already create Buyers deals from inquiries? If yes, pick one.
 
 ## Questions I'd ask you before go-live (answer in one line each)
-20. Which listings are live right now and should the bot talk about them? (It syncs everything in `01 - Listed`.)
-21. Should it also handle `02 - Under Contract` listings (backup offers) or stay quiet on those?
+20. Which listings are live? Bot uses HubSpot stage Listed + Dropbox `01 - Listed`. To confirm: DCAR (HubSpot BOV) and NorCal Portfolio (HubSpot Closed Lost) have folders in `01 - Listed`, so the bot treats them as active. Seven HubSpot "Listed" deals have no Dropbox folder (Countryside Estates GA, Boneville Estates GA, 50 Davis St ME, Pinederosa Park GA, Arden Asheville, Star Mobile Estates, New Orchard Estates): are they publicly marketed?
+21. ~~Under contract listings?~~ Pierce (Nov 1): say it's under contract, ask what else they want, share other deals. No backup-offer talk.
 22. Lighthouse specifically: seller financing has been declined before per your correspondence. Standing answer the bot may give, or always route to you?
 23. Who gets the Morning Broker Brief email besides you? Dylan?
 24. Do you want Dylan able to text commands too (second OWNER phone)?

@@ -3,7 +3,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 Object.assign(process.env, {
-  NODE_ENV: 'test', POLICY_TEST_MODE: '0', DB_MODE: 'memory', SMS_MODE: 'mock', LLM_MODE: 'mock', DROPBOX_MODE: 'off', EMAIL_MODE: 'mock',
+  NODE_ENV: 'test', FIRST_TOUCH_DELAY_MIN_SEC: '0', FIRST_TOUCH_DELAY_MAX_SEC: '0', TEXT_AFTER_EMAIL_MAX_SEC: '0', PACE_MAX_SEC: '0', MIN_GAP_SEC: '0', POLICY_TEST_MODE: '0', DB_MODE: 'memory', SMS_MODE: 'mock', LLM_MODE: 'mock', DROPBOX_MODE: 'off', EMAIL_MODE: 'mock',
   INGEST_SECRET: 'test', OWNER_PHONE: '+19495550000', HUBSPOT_TOKEN: '', REPLY_DELAY_MAX_SEC: '0',
 });
 
@@ -23,7 +23,8 @@ const PIERCE = config.owner.phone;
 let evtId = 0;
 const sms = (from, text) => handleRingCentralEvent({ body: { id: `e${++evtId}`, type: 'SMS', direction: 'Inbound', from: { phoneNumber: from }, subject: text } });
 const toLead = (phone) => mockOutbox.filter((m) => m.to === phone);
-const crexiEmail = (phone, name = 'Jane Buyer') => ({ From: 'notifications@crexi.com', Subject: 'New lead', TextBody: `Name: ${name}\nEmail: ${name.replace(/\s+/g, '.').toLowerCase()}@example.com\nPhone: ${phone}\nProperty: Hidden Harbor Marina & RV Park\nMessage: info please` });
+// text-only leads: these tests are about SMS policy; the email-then-text sequence has its own tests
+const crexiEmail = (phone, name = 'Jane Buyer') => ({ From: 'notifications@crexi.com', Subject: 'New lead', TextBody: `Name: ${name}\nPhone: ${phone}\nProperty: Hidden Harbor Marina & RV Park\nMessage: info please` });
 const { readFileSync } = await import('node:fs');
 const basePolicies = () => ({ ...JSON.parse(readFileSync(new URL('../playbook/policies.json', import.meta.url), 'utf8')), test_mode: false });
 

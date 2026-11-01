@@ -4,7 +4,7 @@ import { db } from '../db/index.js';
 import { listFolder, download } from '../dropbox.js';
 import { classifyFile, rules } from './classify.js';
 import { ingestFile } from './ingest.js';
-import { matchListing } from '../listings.js';
+import { matchListing, mostRestrictive } from '../listings.js';
 
 const baseName = (folder) => folder.replace(/\s+-\s+[^-]+,\s*[A-Z]{2}\s*$/, '').trim(); // "Lighthouse Resort - Isleton, CA" -> "Lighthouse Resort"
 const cityOf = (folder) => folder.match(/-\s+([^-]+,\s*[A-Z]{2})\s*$/)?.[1] || null;
@@ -30,20 +30,45 @@ export async function syncFolder(listingId, rootPath, { internal = false } = {})
   return out;
 }
 
-/** Map "01 - Listed" folders to listings, then sync each, then SOPs. */
+const subfolders = async (root) => (await listFolder(root, { recursive: false })).filter((e) => e['.tag'] === 'folder' || e['.tag'] === 'mount');
+
+/** Find the listing for a deal folder, claiming the folder if the listing has none yet. null = no match. */
+async function listingForFolder(f, listings) {
+  let listing = listings.find((l) => l.dropbox_path?.toLowerCase() === f.path_display.toLowerCase());
+  if (listing) return listing;
+  listing = await matchListing(baseName(f.name));
+  if (listing && !listing.dropbox_path) return db.updateListing(listing.id, { dropbox_path: f.path_display, city: listing.city || cityOf(f.name) });
+  return listing?.dropbox_path && listing.dropbox_path !== f.path_display ? null : listing; // already mapped elsewhere
+}
+
+/** A deal folder HubSpot doesn't know about becomes a listing of its own (Pierce: Dropbox decides when HubSpot doesn't). */
+const listingFromFolder = (f, status) => db.upsertListing({
+  hubspot_deal_id: `dropbox:${f.id || f.path_display.toLowerCase()}`, name: baseName(f.name), city: cityOf(f.name),
+  status, dropbox_path: f.path_display, facts: { source: 'dropbox', ...(status === 'in_escrow' ? { dropbox_stage: 'under_contract' } : {}) },
+});
+
+/** Map "01 - Listed" folders to listings and sync each; "02 - Under Contract" folders mark listings under contract; then SOPs. */
 export async function syncDropbox() {
   if (config.dropbox.mode === 'off') return null;
-  const report = { listings: {}, unmatched_folders: [], sops: null };
-  const folders = (await listFolder(rules.listings_root, { recursive: false })).filter((e) => e['.tag'] === 'folder' || e['.tag'] === 'mount');
-  const listings = await db.listListings();
-  for (const f of folders) {
-    let listing = listings.find((l) => l.dropbox_path?.toLowerCase() === f.path_display.toLowerCase());
-    if (!listing) {
-      listing = await matchListing(baseName(f.name));
-      if (listing && !listing.dropbox_path) listing = await db.updateListing(listing.id, { dropbox_path: f.path_display, city: listing.city || cityOf(f.name) });
-      else if (listing?.dropbox_path && listing.dropbox_path !== f.path_display) listing = null; // already mapped elsewhere
+  const report = { listings: {}, unmatched_folders: [], created_from_dropbox: [], under_contract: [], sops: null };
+
+  // under contract first, so a folder moved to 02 is never treated as available, whatever HubSpot says
+  if (rules.under_contract_root) {
+    for (const f of await subfolders(rules.under_contract_root)) {
+      const listing = await listingForFolder(f, await db.listListings());
+      if (listing) await db.updateListing(listing.id, { status: mostRestrictive(listing.status, 'in_escrow'), facts: { ...(listing.facts || {}), dropbox_stage: 'under_contract' } });
+      else await listingFromFolder(f, 'in_escrow');
+      report.under_contract.push(f.name);
     }
-    if (!listing) { report.unmatched_folders.push(f.name); continue; }
+  }
+
+  for (const f of await subfolders(rules.listings_root)) {
+    let listing = await listingForFolder(f, await db.listListings());
+    if (!listing) {
+      listing = await listingFromFolder(f, 'active');
+      report.created_from_dropbox.push(f.name);
+      report.unmatched_folders.push(f.name); // still logged: Pierce may want to add it to HubSpot or set an alias
+    }
     report.listings[listing.name] = await syncFolder(listing.id, listing.dropbox_path);
   }
   if (rules.sop_root) report.sops = await syncFolder(null, rules.sop_root, { internal: true });

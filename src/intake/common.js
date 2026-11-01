@@ -5,6 +5,7 @@ import { normalizePhone } from '../guardrails.js';
 import { matchListing } from '../listings.js';
 import { notifyOwner, leadLabel } from '../notify.js';
 import * as hubspot from '../hubspot.js';
+import { publicListingName } from '../listings.js';
 
 const ACTIVE = ['contacted', 'engaged', 'qualified', 'booked', 'escalated', 'human', 'awaiting_approval'];
 
@@ -22,7 +23,8 @@ export async function upsertIncomingLead(data, source, { quiet = false } = {}) {
     email, phone,
     company: data.company?.trim() || null,
     role: data.role?.trim() || null,
-    property_name: listing?.name || data.property_name?.trim() || null,
+    // what the buyer saw on the platform; fall back to the listing's public name (never the seller's name)
+    property_name: data.property_name?.trim() || (listing ? publicListingName(listing.name) : null),
     listing_id: listing?.id ?? null,
     listing_code: listing?.listing_code ?? null,
     inquiry: data.inquiry?.trim() || null,
@@ -49,7 +51,8 @@ export async function upsertIncomingLead(data, source, { quiet = false } = {}) {
     ...base, source,
     status: phone ? 'new' : 'no_phone',
     auto_send: !!config.autoSend[source],
-    next_action_at: now().toISOString(),
+    // first contact goes out 1-2 minutes after the inquiry lands (config.firstTouchDelay)
+    next_action_at: new Date(+now() + 1000 * (config.firstTouchDelay.minSec + Math.random() * Math.max(0, config.firstTouchDelay.maxSec - config.firstTouchDelay.minSec))).toISOString(),
     raw: data.raw ?? null,
   });
   if (!phone && !quiet) {

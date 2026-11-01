@@ -26,9 +26,10 @@ async function approve(id, overrideText) {
   }
   const text = overrideText || a.draft;
   const kind = overrideText ? 'owner_edit' : 'approved';
-  const { _attachments = [], ...onSend } = a.on_send || {};
+  const { _attachments = [], _channel, ...onSend } = a.on_send || {};
   const attachments = (await Promise.all(_attachments.map((id) => db.getDocument(id)))).filter(Boolean);
-  const r = (lead.preferred_channel === 'email' || !lead.phone || inWindow(config.replyWindow)) ? await sendNow(lead, text, kind, onSend, attachments) : await scheduleSend(lead, text, kind, onSend);
+  const email = _channel ? _channel === 'email' : (lead.preferred_channel === 'email' || !lead.phone);
+  const r = (email || inWindow(config.replyWindow)) ? await sendNow(lead, text, kind, onSend, attachments, email ? 'email' : 'sms') : await scheduleSend(lead, text, kind, onSend);
   await db.updateApproval(id, { status: overrideText ? 'edited' : 'approved', resolved_at: now().toISOString() });
   await audit(overrideText ? 'edited' : 'approved', { leadId: lead.id, actor: 'pierce', detail: { approval: id, policy: a.policy, ...(overrideText ? { original: a.draft, final: overrideText } : {}) } });
   if (r.scheduled) return notifyOwner(`#${id} queued for ${new Date(r.scheduled).toLocaleString('en-US', { timeZone: config.timezone })} (quiet hours).`);
@@ -42,7 +43,8 @@ async function reject(id) {
   await db.updateApproval(id, { status: 'rejected', resolved_at: now().toISOString() });
   await audit('rejected', { leadId: a.lead_id, actor: 'pierce', detail: { approval: id, policy: a.policy } });
   const lead = await db.getLead(a.lead_id);
-  if (lead.status === 'awaiting_approval') await setStatus(lead, 'human'); // you passed on the first text; bot leaves them alone
+  const emailStep = a.kind === 'first_touch' && a.on_send?._channel === 'email' && lead.phone; // the text still follows
+  if (lead.status === 'awaiting_approval' && !emailStep) await setStatus(lead, 'human'); // you passed on the first text; bot leaves them alone
   return notifyOwner(`Skipped #${id}.`);
 }
 

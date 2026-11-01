@@ -68,10 +68,10 @@ export async function extractDocument({ filename, docType, pdf, text }) {
 
 /** Turn Pierce's quick answer into a reply to the lead, using only his facts. */
 export async function polishAnswer({ lead, question, answer }) {
-  if (config.llmMode === 'mock') return `Pierce confirmed: ${answer}`;
+  if (config.llmMode === 'mock') return `Confirmed: ${answer}`;
   const r = await callTool({
     model: config.anthropic.model,
-    system: `Rewrite the broker's answer as a short, natural ${lead.preferred_channel === 'email' ? 'email reply (no signature)' : 'text message (under 300 characters)'} to the lead. Use ONLY facts in the broker's answer. Don't add claims, numbers, or enthusiasm.`,
+    system: `Rewrite the broker's answer as a short, natural ${lead.preferred_channel === 'email' ? 'email reply (no signature)' : 'text message (under 300 characters)'} to the lead.${config.discloseAi ? '' : ' Write as the broker himself, first person.'} Use ONLY facts in the broker's answer. Don't add claims, numbers, or enthusiasm.`,
     content: `Lead asked: ${question}\nPierce's answer: ${answer}`,
     tool: { name: 'reply', description: 'The reply', input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
     maxTokens: 400,
@@ -143,15 +143,21 @@ async function mockSetter({ lead, listing, messages, mode, executors, kb, openQu
   const lastOut = [...messages].reverse().findIndex((m) => m.direction === 'out');
   const pending = (lastOut === -1 ? messages : messages.slice(messages.length - lastOut)).filter((m) => m.direction === 'in');
   const last = pending.map((m) => m.body).join(' ').toLowerCase() || [...messages].reverse().find((m) => m.direction === 'in')?.body?.toLowerCase() || '';
-  if (mode === 'followup') return { action: 'reply', reply_text: lead.status === 'in_dd' ? 'Had a chance to go through the numbers? Happy to walk through anything with Pierce.' : 'Quick follow-up: still worth a short call with Pierce this week?', summary: 'follow-up' };
-  if (/tuesday|monday|wednesday|thursday|friday|\d(am|pm)/.test(last)) return { action: 'booked', reply_text: 'Perfect, Pierce will call you then.', qualification: { call_time: last }, qualified: true, summary: 'Call booked' };
+  if (/are you (a |an )?(bot|ai|real)|is this (a |an )?(bot|real person)/.test(last)) return { action: 'escalate', reply_text: '', escalation_reason: 'asked if bot', summary: 'Asked whether this is a bot' };
+  if (listing && listing.status && listing.status !== 'active' && mode !== 'followup') {
+    const sold = listing.status === 'closed';
+    if (/looking for|want|need|\d+\s*(spaces|units|sites|pads)|\$\d/.test(last)) return { action: 'reply', reply_text: "Got it, I'll send over anything that fits.", qualification: { criteria: last }, summary: `Criteria (${sold ? 'sold' : 'under-contract'} listing inquiry)` };
+    return { action: 'reply', reply_text: `That one is ${sold ? 'sold' : 'under contract'}, but I have other listings I can share. What are you looking for?`, summary: 'Off-market listing; asked criteria' };
+  }
+  if (mode === 'followup') return { action: 'reply', reply_text: lead.status === 'in_dd' ? 'Had a chance to go through the numbers? Happy to walk through anything.' : 'Quick follow-up: still worth a short call this week?', summary: 'follow-up' };
+  if (/tuesday|monday|wednesday|thursday|friday|\d(am|pm)/.test(last)) return { action: 'booked', reply_text: "Perfect, I'll call you then.", qualification: { call_time: last }, qualified: true, summary: 'Call booked' };
   if (/not interested|no thanks/.test(last)) return { action: 'disqualify', reply_text: 'Understood, thanks for letting me know.', summary: 'Not interested' };
-  if (/offer|price/.test(last)) return { action: 'escalate', reply_text: "Good question, I'll have Pierce get back to you on that directly.", escalation_reason: 'price/offer', summary: 'Asking about price' };
-  if (/cash|1031|bank/.test(last)) return { action: 'send_booking_link', reply_text: 'Great. Easiest next step is a 15-min call with Pierce. What day works?', qualification: { financing: last }, qualified: true, summary: 'Qualified buyer' };
+  if (/offer|price/.test(last)) return { action: 'escalate', reply_text: "Good question, let me get back to you on that directly.", escalation_reason: 'price/offer', summary: 'Asking about price' };
+  if (/cash|1031|bank/.test(last)) return { action: 'send_booking_link', reply_text: 'Great. Easiest next step is a quick 15-min call. What day works?', qualification: { financing: last }, qualified: true, summary: 'Qualified buyer' };
   if (executors && /unit mix|how many|\brv\b|\bmh\b|occupan/.test(last)) {
     const s = await executors.rent_roll_stats({});
     if (s.locked) return { action: 'reply', reply_text: `That's in the rent roll, which opens up once the CA is signed: ${s.ca_link || '(CA link)'}`, summary: 'Asked unit mix pre-CA' };
-    if (!s.available) return { action: 'ask_pierce', question_for_pierce: last, reply_text: 'Let me confirm that with Pierce and get right back to you.', summary: 'no rent roll' };
+    if (!s.available) return { action: 'ask_pierce', question_for_pierce: last, reply_text: 'Let me confirm that and get right back to you.', summary: 'no rent roll' };
     const parts = Object.entries(s.by_type).map(([t, g]) => `${g.spaces} ${t} (${g.occupied} occupied, avg $${g.avg_rent_occupied})`);
     return { action: 'reply', reply_text: `Per the rent roll: ${s.total.spaces} spaces, ${parts.join(', ')}. ${s.total.occupancy_pct}% occupied overall.`, summary: 'Answered unit mix' };
   }
@@ -166,7 +172,7 @@ async function mockSetter({ lead, listing, messages, mode, executors, kb, openQu
     const om = docs.documents.find((d) => d.type === 'om');
     if (!om) return { action: 'reply', reply_text: `Happy to. First step is the CA: ${docs.ca_link}`, summary: 'OM request pre-CA' };
     const link = await executors.get_document_link({ document_id: om.id });
-    return { action: 'reply', reply_text: link.ok ? `Here's the OM: ${link.url}` : 'Pierce will email that over shortly.', summary: 'Sent OM' };
+    return { action: 'reply', reply_text: link.ok ? `Here's the OM: ${link.url}` : "I'll email that over shortly.", summary: 'Sent OM' };
   }
   const kbHit = kb.find((q) => overlap(q.question, last) >= 0.5);
   if (kbHit) return { action: 'reply', reply_text: kbHit.answer, summary: 'Answered from approved answers' };
@@ -175,7 +181,7 @@ async function mockSetter({ lead, listing, messages, mode, executors, kb, openQu
     const best = (r.results || []).map((x) => ({ x, o: overlap(x.excerpt, last) })).sort((a, b) => b.o - a.o)[0];
     if (best && best.o >= 0.4) return { action: 'reply', reply_text: `Per ${best.x.file}: ${best.x.excerpt.split('\n').slice(1).join(' ').slice(0, 200)}`, summary: 'Answered from docs' };
     if (openQuestions.length) return { action: 'no_reply', reply_text: '', summary: 'waiting on Pierce' };
-    return { action: 'ask_pierce', question_for_pierce: pending.map((m) => m.body).join(' / '), reply_text: 'Good question, let me confirm that with Pierce and get right back to you.', summary: 'Needs Pierce' };
+    return { action: 'ask_pierce', question_for_pierce: pending.map((m) => m.body).join(' / '), reply_text: 'Good question, let me confirm that and get right back to you.', summary: 'Needs Pierce' };
   }
   if (/thanks|ok\b|👍/.test(last)) return { action: 'no_reply', reply_text: '', summary: 'ack' };
   return { action: 'reply', reply_text: 'Thanks! How are you planning to fund it: cash, bank debt, or a 1031?', summary: 'Engaged' };
