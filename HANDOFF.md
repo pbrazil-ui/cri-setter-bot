@@ -52,7 +52,7 @@ Claude Code will ask you for keys as it goes. Paste them into Railway's Variable
 |---|---|---|
 | Supabase | Create project, run `supabase/schema.sql`, copy URL + service_role key | 5 min |
 | RingCentral | Developer app (JWT), copy client id/secret/JWT; confirm 10DLC status | 15 min, then wait on 10DLC |
-| Dropbox | Developer app with the 5 scopes, one-time refresh token (commands in `.env.example`) | 10 min |
+| Dropbox | Developer app with the 4 scopes, one-time refresh token (commands in `.env.example`) | 10 min |
 | Microsoft 365 | Entra app registration, `Mail.ReadWrite`, admin consent (this is the tenant admin step) | 15 min, admin needed |
 | Claude API | console.anthropic.com key, $50/mo limit | 2 min |
 | HubSpot | Private app token (contacts + deals) | 3 min |

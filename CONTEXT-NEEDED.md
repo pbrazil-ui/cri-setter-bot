@@ -7,7 +7,7 @@ Ordered by impact. 1–6 block go-live. The rest make it sound like you and answ
    SMS + Read Messages + Webhook Subscriptions permissions. Request production graduation early.
 2. **Your cell** for approvals (`OWNER_PHONE`). Different from the texting number.
 3. **Dropbox app** (dropbox.com/developers): scoped app, permissions `files.metadata.read`, `files.content.read`,
-   `sharing.write`, `sharing.read`, `team_data.member` (team account). Generate a refresh token once (README has the
+   `sharing.write`, `sharing.read`. No team scopes (they make the token team-linked; team folders are reached via path-root). Generate a refresh token once (README has the
    3-line script). Confirm the team's shared-link policy allows public view-only links; if it's "team only", every
    document goes out as an email attachment instead.
 4. **Microsoft 365 app registration** for email: tenant ID, client ID, secret, application permission `Mail.ReadWrite`

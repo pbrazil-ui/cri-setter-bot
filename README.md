@@ -79,7 +79,7 @@ New project (West US) → SQL Editor → paste `supabase/schema.sql` → Run →
 developers.ringcentral.com → Create App → REST API, server-only, **JWT** auth. Permissions: SMS, Read Messages, Webhook Subscriptions, Read Accounts. Create a JWT for the texting number's user. Request production graduation.
 
 ### 4. Dropbox
-dropbox.com/developers → Create app → Scoped access, Full Dropbox. Permissions: `files.metadata.read`, `files.content.read`, `sharing.read`, `sharing.write`, `team_data.member`. Get a refresh token once (commands in `.env.example`). Check Admin → Settings → Sharing: if links are "team only", documents go out as email attachments instead of links (handled automatically).
+dropbox.com/developers → Create app → Scoped access, Full Dropbox. Permissions: `files.metadata.read`, `files.content.read`, `sharing.read`, `sharing.write` (no team scopes: a team scope makes the token team-linked and breaks the per-user calls; the team space is reached with the root-namespace path-root header instead). Get a refresh token once (commands in `.env.example`). Check Admin → Settings → Sharing: if links are "team only", documents go out as email attachments instead of links (handled automatically).
 
 ### 5. Microsoft 365 (email)
 Entra → App registration → application permission `Mail.ReadWrite` (add `Mail.Send` only if you later set `EMAIL_SEND_MODE=send`) → admin consent → application access policy scoped to your mailbox. Without this, email-only leads are flagged to you instead of emailed; everything else works.

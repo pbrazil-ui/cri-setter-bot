@@ -72,7 +72,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - Folder names map to listings by fuzzy match on the HubSpot deal name (`src/listings.js`). Unmatched folders are logged; fix by setting `listings.dropbox_path` or adding an alias.
 
 ## Open TODOs (in order)
-1. `npm install` (commit the lockfile), `npm test`. Verify the Dropbox API path-root header against Pierce's team account (namespace 15100856355 is the Brokerage team folder root seen via MCP).
+1. ~~`npm install`, lockfile, `npm test`~~ done Nov 1 2026. Dropbox path-root verified via MCP: team root namespace is `12987598657` (what `users/get_current_account` returns, which `src/dropbox.js` uses); `/Brokerage/01 - Brokerage/Deals/01 - Listed` resolves under it. `15100856355` is the Brokerage shared folder itself, not the root.
 2. Pierce fills `CONTEXT-NEEDED.md` + the TODOs in `playbook/setter-playbook.md`.
 3. Deploy per README. Run `/admin/sync-docs`, check logs for unmatched folders and failed files.
 4. Inbound email replies (Phase 2 of the master spec): Graph change-notification webhook → `handleInboundEmail` (mirror of `handleInboundSms`, set `email_last_message_id` so replies thread). Not built yet; today email is outbound + Outlook drafts.
