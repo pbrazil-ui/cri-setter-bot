@@ -1,0 +1,25 @@
+{
+  "name": "cri-setter-bot",
+  "version": "1.0.0",
+  "description": "Inbound SMS setter for CRI Brokerage: Crexi leads -> RingCentral SMS -> Claude -> booked calls",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "DB_MODE=memory SMS_MODE=mock LLM_MODE=mock node src/server.js",
+    "test": "node --test test/*.test.js",
+    "import-csv": "node scripts/import-csv.js",
+    "subscribe": "node scripts/subscribe.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@ringcentral/sdk": "latest",
+    "@supabase/supabase-js": "^2",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "multer": "^2.0.0"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "_note": "Pierce's autonomy model, enforced in code (src/policy.js) before every outbound message. mode: auto = Level 2, send without asking | approve = Level 3, Pierce must Y | block = never. Start conservative, widen as the bot proves itself. Change this file and redeploy; no code changes needed.",
+  "emergency_stop": false,
+  "test_mode": true,
+  "_test_mode": "true = nothing external is sent; every message becomes an approval so you can watch what it WOULD do.",
+  "policies": {
+    "first_touch.listing_email": {
+      "mode": "auto",
+      "why": "fresh inquiry on our listing, public info only"
+    },
+    "first_touch.webhook": {
+      "mode": "auto"
+    },
+    "first_touch.inbound_sms": {
+      "mode": "auto"
+    },
+    "first_touch.csv": {
+      "mode": "approve",
+      "why": "uploaded lists: TCPA exposure"
+    },
+    "first_touch.manual": {
+      "mode": "approve"
+    },
+    "first_touch.email": {
+      "mode": "approve",
+      "why": "email first touches land in Outlook Drafts until Pierce trusts them"
+    },
+    "reply.public_facts": {
+      "mode": "auto",
+      "why": "listing facts + public docs"
+    },
+    "reply.ca_docs": {
+      "mode": "auto",
+      "why": "OM / rent roll / financials to a CA-verified buyer"
+    },
+    "reply.sensitive_docs": {
+      "mode": "approve",
+      "why": "inspections, water tests, leases, compliance"
+    },
+    "reply.from_approved_answers": {
+      "mode": "auto",
+      "why": "Pierce already answered this once"
+    },
+    "reply.holding": {
+      "mode": "auto",
+      "why": "'let me confirm with Pierce' while a question is open"
+    },
+    "reply.document_link": {
+      "mode": "auto",
+      "why": "view-only link to a doc the buyer is cleared for"
+    },
+    "reply.scheduling": {
+      "mode": "auto"
+    },
+    "reply.email": {
+      "mode": "approve",
+      "why": "email replies stay as Outlook drafts for now"
+    },
+    "followup.pre_ca": {
+      "mode": "auto"
+    },
+    "followup.in_dd": {
+      "mode": "auto"
+    },
+    "escalate.price_terms_legal": {
+      "mode": "approve",
+      "why": "Level 3: offers, counters, terms, commission, legal"
+    },
+    "escalate.frustrated_or_sensitive": {
+      "mode": "approve"
+    },
+    "answer.from_pierce": {
+      "mode": "auto",
+      "why": "Pierce's A# answer, reworded"
+    }
+  },
+  "limits": {
+    "max_msgs_per_lead_per_day": 6,
+    "max_auto_sends_per_hour": 40,
+    "max_pending_approvals": 8,
+    "approval_expires_hours": 48
+  }
+}

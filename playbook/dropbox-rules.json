@@ -1,0 +1,74 @@
+{
+  "_note": "How the bot treats files in each listing's Dropbox folder. First matching rule wins (case-insensitive regex on the path inside the listing folder). tier: public = anyone; ca = only after CA verified; sensitive = bot may read but any answer using it needs Pierce's Y; exclude = never loaded.",
+  "listings_root": "/Brokerage/01 - Brokerage/Deals/01 - Listed",
+  "sop_root": "/Brokerage/04 - SOP's",
+  "max_file_mb": 25,
+  "rules": [
+    {
+      "match": "zz - archive|superseded|/archive/|\\(old\\)",
+      "tier": "exclude",
+      "why": "old versions"
+    },
+    {
+      "match": "\\.(jpe?g|png|webp|heic|gif|mp4|mov|zip)$",
+      "tier": "exclude",
+      "why": "media"
+    },
+    {
+      "match": "correspondence|email thread|seller qa/.*(email|thread)",
+      "tier": "sensitive",
+      "doc_type": "history",
+      "why": "past conversations: the bot learns what has been asked/offered before; replies using them are reviewed"
+    },
+    {
+      "match": "purchase agreement|escrow|closing doc|underwriting|debt quote|financing \\(debt|/14 - financing|bank statement|tax return|employment|employee|handbook|insurance|executed|signed lease|\\bloi\\b|commission agreement|listing agreement|\\bbov\\b",
+      "tier": "exclude",
+      "why": "internal, legal or PII"
+    },
+    {
+      "match": "flyer|teaser|brochure",
+      "tier": "public",
+      "doc_type": "om"
+    },
+    {
+      "match": "offering memorandum|(^|/)00 - om/|\\bom\\b",
+      "tier": "ca",
+      "doc_type": "om"
+    },
+    {
+      "match": "rent roll",
+      "tier": "ca",
+      "doc_type": "rent_roll"
+    },
+    {
+      "match": "income statement|profit and loss|p&l|t-?12|trailing|financials/",
+      "tier": "ca",
+      "doc_type": "t12"
+    },
+    {
+      "match": "seller qa|questionnaire|_qa\\.|due diligence list",
+      "tier": "ca",
+      "doc_type": "qa"
+    },
+    {
+      "match": "rules|regulations|form agreement|blank template|permit to operate|business license",
+      "tier": "ca",
+      "doc_type": "rules"
+    },
+    {
+      "match": "inspection|violation|compliance|hazardous|cupa|code enforcement|coliform|lab report|water quality|state lands|lease",
+      "tier": "sensitive",
+      "doc_type": "compliance"
+    },
+    {
+      "match": "water|septic|sewer|utilit|well house|electrical|capital improvement|invoice|proposal|estimate",
+      "tier": "sensitive",
+      "doc_type": "utilities"
+    },
+    {
+      "match": ".*",
+      "tier": "sensitive",
+      "doc_type": "other"
+    }
+  ]
+}
