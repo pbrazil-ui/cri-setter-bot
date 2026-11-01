@@ -1,8 +1,8 @@
 {
   "_note": "Pierce's autonomy model, enforced in code (src/policy.js) before every outbound message. mode: auto = Level 2, send without asking | approve = Level 3, Pierce must Y | block = never. Start conservative, widen as the bot proves itself. Change this file and redeploy; no code changes needed.",
   "emergency_stop": false,
-  "test_mode": true,
-  "_test_mode": "true = nothing external is sent; every message becomes an approval so you can watch what it WOULD do.",
+  "test_mode": false,
+  "_test_mode": "true = nothing external is sent; every message becomes an approval. Pierce turned this OFF on Nov 1 2026 (\"you have my Y approval for new leads... while sticking to policies\"). Policies below still hold price/terms/legal, sensitive docs, favorites' texts and CSV lists for his Y. Text PAUSE to stop everything.",
   "policies": {
     "first_touch.listing_email": {
       "mode": "auto",

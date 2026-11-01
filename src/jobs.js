@@ -10,6 +10,7 @@ import { sendMorningBrief } from './brief.js';
 import { importEmailHistory } from './docs/history.js';
 import { audit } from './policy.js';
 import { now } from './clock.js';
+import { pollInboxForLeads } from './intake/mailbox.js';
 
 let running = false;
 
@@ -45,6 +46,17 @@ async function syncListings() {
 /** New inquiries whose 1-2 min (email) or +5 min (text) mark has come due. Emails go any hour; texts wait for the send window. */
 async function firstTouchPass() {
   for (const lead of await db.listLeadsForFirstTouch(config.firstTouchPerTick)) await processFirstTouch(lead);
+}
+
+let polling = false;
+/** Every minute: new lead notifications in Pierce's inbox become leads (replaces Postmark + forwarding). */
+export async function inboxTick() {
+  if (polling) return null;
+  polling = true;
+  try { const r = await pollInboxForLeads(); if (r?.leads) console.log('[inbox leads]', JSON.stringify(r)); return r; } catch (e) {
+    console.error('[inbox leads]', e.message);
+    return { error: e.message };
+  } finally { polling = false; }
 }
 
 let touching = false;
@@ -106,6 +118,8 @@ export function startJobs() {
   setInterval(expireTick, 10 * 60 * 1000);
   setInterval(replyTick, 20 * 1000);
   setInterval(firstTouchTick, 20 * 1000);
+  setInterval(inboxTick, 60 * 1000);
+  setTimeout(inboxTick, 15 * 1000);
   setInterval(docSync, 3600 * 1000);
   setTimeout(docSync, 60 * 1000); // after HubSpot listings sync
   renewSubscription();

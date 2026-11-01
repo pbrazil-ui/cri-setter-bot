@@ -10,10 +10,10 @@ Runs on Railway (one replica). State in Supabase. Documents mirrored from Dropbo
 
 ## Autonomy is in code: `playbook/policies.json` + `src/policy.js`
 Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → `resolve()` → auto | approve | block.
-`test_mode` ships ON. `emergency_stop` and PAUSE override everything. `src/brief.js` sends the Morning Broker Brief at 7:30.
+`test_mode` is OFF since Nov 1 2026 (Pierce gave standing approval for new-lead messaging within policies; Level 3 items still need his Y). `emergency_stop` and PAUSE override everything. `src/brief.js` sends the Morning Broker Brief at 7:30.
 `audit_log` records every action with actor. Never relax a policy in code; Pierce edits the JSON.
 
-## Pierce starts here: HANDOFF.md
+## Pierce starts here: HANDOFF.md, then SETUP-PROMPT.md (paste into a browser Claude to set up every account)
 
 ## Read these first
 1. `playbook/setter-playbook.md` - how the bot talks and what it may say. Pierce's standard.
@@ -32,13 +32,15 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - `src/docs/` `sync.js` Dropbox → DB mirror · `classify.js` + `playbook/dropbox-rules.json` folder → tier · `ingest.js` file → chunks/units/line items · `rentroll.js` + `financials.js` pure math · `search.js` keyword retrieval
 - `src/dropbox.js` Dropbox API (team root, download, view-only links) · `src/email.js` Graph mail · `src/ringcentral.js` SMS
 - `src/hubspot.js` contacts, Buyers deals, stage rules (`decideStageMove`), notes, listing import
-- `src/intake/` lead emails (`email.js`), CSV (`csv.js`), shared upsert (`common.js`) · `src/platforms.js` which site a lead came from
+- `src/intake/` lead emails (`email.js`), inbox poller (`mailbox.js`: reads platform-sender emails from Pierce's Outlook every minute, so no Postmark/forwarding), CSV (`csv.js`), shared upsert (`common.js`) · `src/platforms.js` which site a lead came from
+- `src/selftest.js` `GET /admin/selftest?key=` read-only check of every integration (number SMS-enabled, webhook active, mailbox readable, models available)
 - `src/guardrails.js` opt-out, quiet hours, human-only topics · `src/calc.js` safe arithmetic
 - `src/db/` `supabase.js` (prod) / `memory.js` (tests), same interface · `supabase/schema.sql`
 
 ## Commands
-- `npm install && npm test` (44 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
+- `npm install && npm test` (47 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
 - `npm run dev` local server, all mocks, :3000
+- `open "$PUBLIC_URL/admin/selftest?key=$INGEST_SECRET"` after any deploy or key change: every check should be ok
 - `curl -X POST "$PUBLIC_URL/admin/sync-docs?key=$INGEST_SECRET"` force a Dropbox sync
 - `curl -X POST "$PUBLIC_URL/api/ask?key=..." -d '{"listing":"Lighthouse","question":"unit mix?","ca_verified":true}'` test the document brain
 
@@ -77,7 +79,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 1. ~~`npm install`, lockfile, `npm test`~~ done Nov 1 2026. Dropbox path-root verified via MCP: team root namespace is `12987598657` (what `users/get_current_account` returns, which `src/dropbox.js` uses); `/Brokerage/01 - Brokerage/Deals/01 - Listed` resolves under it. `15100856355` is the Brokerage shared folder itself, not the root.
 2. Pierce fills `CONTEXT-NEEDED.md` + the TODOs in `playbook/setter-playbook.md`.
 3. Deploy per README. Run `/admin/sync-docs`, check logs for unmatched folders and failed files.
-4. Inbound email replies (Phase 2 of the master spec): Graph change-notification webhook → `handleInboundEmail` (mirror of `handleInboundSms`, set `email_last_message_id` so replies thread). Not built yet; today email is outbound + Outlook drafts.
+4. ~~Lead emails from the inbox~~ done (mailbox.js). Still open, inbound email REPLIES (Phase 2 of the master spec): Graph change-notification webhook → `handleInboundEmail` (mirror of `handleInboundSms`, set `email_last_message_id` so replies thread). Not built yet; today email is outbound + Outlook drafts.
 5. ~~Mark listings closed / sync `02 - Under Contract`~~ done Nov 1 2026 (stage + Dropbox). Still open: `04 - Closed` folders.
 6. HubSpot meetings webhook → mark `booked` automatically.
 7. Weekly digest to Pierce: open questions, pending approvals, leads gone quiet, qa_bank growth.

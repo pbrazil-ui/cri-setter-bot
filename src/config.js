@@ -42,6 +42,8 @@ export const config = {
     alwaysCc: list(env.EMAIL_ALWAYS_CC, ['DylanB@cricommercial.com']),
     signatureHtml: env.EMAIL_SIGNATURE_HTML || '',
     maxAttachmentMb: num(env.EMAIL_MAX_ATTACHMENT_MB, 3),
+    // read lead notifications (Crexi, LoopNet, ...) straight from the inbox: no Postmark, no forwarding rule
+    pollLeads: bool(env.EMAIL_POLL_LEADS, true),
   },
   dropbox: {
     mode: env.DROPBOX_MODE || (env.DROPBOX_REFRESH_TOKEN ? 'live' : 'off'), // live | mock | off

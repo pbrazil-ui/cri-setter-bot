@@ -215,3 +215,45 @@ test('human pacing: Pierce\'s A# answer waits a random beat; two texts are never
   assert.equal(toBuyer('+15305550101').length, n + 1, 'out by 3 min');
   assert.match(toBuyer('+15305550101').at(-1).text, /Private well/);
 });
+
+test('lead emails are read straight from the inbox: platform senders only, each once', async () => {
+  const { mockInbox } = await import('../src/email.js');
+  const { inboxTick } = await import('../src/jobs.js');
+  const { isPlatformSender } = await import('../src/intake/mailbox.js');
+  assert.ok(isPlatformSender('notifications@crexi.com'));
+  assert.ok(isPlatformSender('leads@mail.loopnet.com'));
+  assert.ok(!isPlatformSender('buyer@gmail.com'));
+  assert.ok(!isPlatformSender('crexi.com@evil.example'));
+  mockInbox.length = 0;
+  mockInbox.push(
+    { id: 'old', receivedDateTime: at(-7200), from: { emailAddress: { address: 'notifications@crexi.com' } }, subject: 'New lead', body: { contentType: 'text', content: 'Name: Old Lead\nPhone: 530-555-0999\nProperty: Lighthouse Resort' } },
+    { id: 'm1', receivedDateTime: at(-60), from: { emailAddress: { address: 'notifications@crexi.com' } }, subject: 'New lead', body: { contentType: 'html', content: '<p>Name: Ray Buyer<br>Phone: 530-555-0123<br>Property: Lighthouse Resort<br>Message: still available?</p>' } },
+    { id: 'm2', receivedDateTime: at(-30), from: { emailAddress: { address: 'someone@gmail.com' } }, subject: 'Re: Crexi lead on Lighthouse', body: { contentType: 'text', content: 'Name: Not A Lead\nPhone: 530-555-0456\nProperty: Lighthouse Resort' } },
+  );
+  const r = await inboxTick();
+  assert.deepEqual(r, { seen: 2, leads: 1, ignored: 1 }); // the 2-hour-old one is before the 1-hour lookback
+  assert.ok(await db.findLeadByPhone('+15305550123'));
+  assert.equal(await db.findLeadByPhone('+15305550456'), null);
+  assert.equal(await db.findLeadByPhone('+15305550999'), null);
+  const again = await inboxTick();
+  assert.equal(again.leads, 0, 'never processed twice');
+});
+
+test('self-test reports every connection without sending anything (mock modes)', async () => {
+  const { selftest } = await import('../src/selftest.js');
+  const before = mockOutbox.length + mockMailbox.length;
+  const r = await selftest();
+  assert.equal(r.checks.database.ok, true);
+  assert.deepEqual(r.checks.database.listings, { active: 2, in_escrow: 1 });
+  assert.equal(r.checks.ringcentral.mode, 'mock');
+  assert.equal(r.checks.hubspot.ok, false); // no token in tests: reported, not thrown
+  assert.ok('test_mode' in r.autonomy);
+  assert.equal(mockOutbox.length + mockMailbox.length, before, 'sends nothing');
+});
+
+test('policies.json: test_mode is off (Pierce, Nov 1 2026) but Level 3 items still need his Y', async () => {
+  const { readFileSync } = await import('node:fs');
+  const p = JSON.parse(readFileSync(new URL('../playbook/policies.json', import.meta.url), 'utf8'));
+  assert.equal(p.test_mode, false);
+  for (const k of ['escalate.price_terms_legal', 'escalate.frustrated_or_sensitive', 'reply.sensitive_docs', 'first_touch.csv', 'first_touch.favorite']) assert.equal(p.policies[k].mode, 'approve', k);
+});

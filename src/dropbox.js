@@ -38,6 +38,15 @@ async function ensureRoot() {
   pathRoot = acct.root_info?.root_namespace_id || null;
 }
 
+/** Read-only: refresh token works, token is user-linked (not team-linked), team root resolves the listings folder. */
+export async function dropboxCheck(listingsRoot) {
+  if (D.mode !== 'live') return { mode: D.mode };
+  const acct = await rpc('users/get_current_account', null, { withRoot: false });
+  await ensureRoot();
+  const folders = (await rpc('files/list_folder', { path: listingsRoot, recursive: false, include_mounted_folders: true })).entries.filter((e) => e['.tag'] === 'folder');
+  return { ok: folders.length > 0, account: acct.email, root_namespace: pathRoot, listing_folders: folders.map((f) => f.name), problems: folders.length ? [] : [`no folders under ${listingsRoot}`] };
+}
+
 export async function listFolder(path, { recursive = true } = {}) {
   if (D.mode === 'mock') {
     const p = path.toLowerCase();

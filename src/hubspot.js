@@ -29,6 +29,17 @@ const safe = (fn) => async (...args) => {
 const RANK = { [S.newBuyer]: 0, [S.qualified]: 1, [S.offerOut]: 2, [S.underContract]: 3, [S.won]: 4, [S.lost]: -1 };
 const HUMAN_STAGES = new Set([S.offerOut, S.underContract, S.won]);
 
+/** Read-only: token works for contacts and deals, and both pipelines are reachable. */
+export async function hubspotCheck() {
+  if (!enabled()) return { ok: false, problems: ['HUBSPOT_TOKEN not set'] };
+  const one = (pipeline) => api('POST', '/crm/v3/objects/deals/search', { filterGroups: [{ filters: [{ propertyName: 'pipeline', operator: 'EQ', value: pipeline }] }], limit: 1 });
+  const [buyers, sellers] = await Promise.all([one(hs.buyersPipeline), one(hs.sellersPipeline)]);
+  await api('GET', '/crm/v3/objects/contacts?limit=1');
+  const problems = [];
+  if (!sellers.total) problems.push(`Sellers pipeline ${hs.sellersPipeline} has no deals visible to this token`);
+  return { ok: !problems.length, buyers_deals: buyers.total, sellers_deals: sellers.total, problems };
+}
+
 /** Map bot lead status -> { stage, lostReason } the bot wants the deal in. */
 export function targetStageFor(status) {
   switch (status) {

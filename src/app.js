@@ -87,6 +87,7 @@ export function buildApp() {
     } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
   });
 
+  app.get('/admin/selftest', requireKey, async (_req, res) => { const { selftest } = await import('./selftest.js'); const r = await selftest(); res.status(r.ok ? 200 : 500).json(r); });
   app.post('/admin/tick', requireKey, async (_req, res) => res.json(await tick()));
 
   return app;

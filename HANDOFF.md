@@ -57,7 +57,7 @@ Claude Code will ask you for keys as it goes. Paste them into Railway's Variable
 | Claude API | console.anthropic.com key, $50/mo limit | 2 min |
 | HubSpot | Private app token (contacts + deals) | 3 min |
 | Railway | Deploy from GitHub, paste variables, generate domain | 10 min |
-| Leads in | Outlook rule forwarding Crexi/LoopNet/RVParkStore/MHVillage emails to the Postmark address | 10 min |
+| Leads in | Nothing: the bot reads Crexi/LoopNet/RVParkStore/MHVillage emails from your inbox once Microsoft 365 is connected | 0 min |
 | Docs | `/admin/sync-docs`, fix any unmatched Dropbox folders, fill asking price/summary per listing | 20 min |
 
 ## 5. Then: a week in test mode

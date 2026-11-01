@@ -32,6 +32,21 @@ export async function sendSms(to, text) {
 }
 
 /** Create or renew the webhook subscription for inbound SMS. Run on boot and every 12h. */
+/** Read-only: logs in, confirms RC_FROM_NUMBER is on this account with SMS enabled, and the webhook is active. */
+export async function rcCheck() {
+  if (config.smsMode === 'mock') return { mode: 'mock' };
+  const p = await platform();
+  const ext = await (await p.get('/restapi/v1.0/account/~/extension/~')).json();
+  const nums = (await (await p.get('/restapi/v1.0/account/~/extension/~/phone-number', { perPage: 100 })).json()).records || [];
+  const from = nums.find((n) => n.phoneNumber === config.rc.fromNumber);
+  const subs = ((await (await p.get('/restapi/v1.0/subscription')).json()).records || []).filter((s) => s.deliveryMode?.address === `${config.publicUrl}/webhooks/ringcentral`);
+  const problems = [];
+  if (!from) problems.push(`RC_FROM_NUMBER ${config.rc.fromNumber} is not on extension ${ext.extensionNumber} (numbers: ${nums.map((n) => n.phoneNumber).join(', ') || 'none'})`);
+  else if (!(from.features || []).includes('SmsSender')) problems.push(`${config.rc.fromNumber} is not SMS-enabled (features: ${(from.features || []).join(', ')})`);
+  if (!subs.some((s) => s.status === 'Active')) problems.push('no active inbound-SMS webhook for PUBLIC_URL yet (created on boot; check PUBLIC_URL and redeploy)');
+  return { ok: !problems.length, extension: ext.name, from: config.rc.fromNumber, webhook: subs.map((s) => `${s.status} until ${s.expirationTime}`), problems };
+}
+
 export async function ensureSubscription() {
   if (config.smsMode === 'mock') return { mock: true };
   const p = await platform();

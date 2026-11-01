@@ -39,7 +39,7 @@ Pierce's cell ◄── approvals (Y/N/E), questions (A#), CA#, PAUSE, Morning B
 
 ## Autonomy model (your Levels 1/2/3) - `playbook/policies.json`
 Every outbound message is classified (`first_touch.listing_email`, `reply.ca_docs`, `reply.sensitive_docs`, `escalate.price_terms_legal`, …) and resolved to **auto**, **approve** or **block**. Change the file, redeploy, done.
-- `test_mode: true` → nothing external goes out; every message becomes an approval so you can watch what it *would* do. **Start here.**
+- `test_mode: true` → nothing external goes out; every message becomes an approval so you can watch what it *would* do. (Off since Nov 1 2026, Pierce's call.)
 - `emergency_stop: true` (or text `PAUSE`) → global stop on external actions.
 - Limits: per-lead daily cap, hourly auto-send budget, max pending approvals, approval expiry (48h; stale drafts never send).
 - Audit trail (`audit_log`): every send, draft, approval, edit, escalation, question, answer, stage move, opt-out, with actor (bot / pierce / system). Your `E#` edits are stored original-vs-final to feed the writing-style loop.
@@ -93,7 +93,10 @@ console.anthropic.com key (set a $50/mo limit to start). HubSpot → Private App
 New Project → Deploy from GitHub → Variables → paste `.env.example` filled in → Settings → Generate Domain → put it in `PUBLIC_URL`. Check `/health`. Logs should show `[rc subscription]`, `[listings] synced`, `[dropbox sync]`.
 
 ### 8. Leads in
-Outlook rule: from contains `crexi.com` / `loopnet.com` / `rvparkstore.com` / `mhvillage.com` → forward to a Postmark inbound address whose webhook is `https://DOMAIN/ingest/email?key=SECRET`. (Microsoft may require an admin to allow external auto-forward; Zapier is the fallback.) Lists: `https://DOMAIN/upload?key=SECRET` on your phone.
+Automatic once Microsoft 365 is connected: every minute the bot reads new emails in your inbox **from** crexi.com, loopnet.com, rvparkstore.com, mhvillage.com (and HubSpot form notifications) and turns them into leads. No Postmark, no forwarding rule. `EMAIL_POLL_LEADS=false` turns it off. `/ingest/email` still accepts Postmark/Zapier posts if you ever need them. Lists: `https://DOMAIN/upload?key=SECRET` on your phone.
+
+### 8b. Check everything
+`https://DOMAIN/admin/selftest?key=SECRET` checks Supabase, Claude, RingCentral (number SMS-enabled, webhook active), HubSpot, Dropbox and Outlook without sending anything.
 
 ### 9. Documents
 `POST /admin/sync-docs?key=SECRET`. Check the log for `unmatched_folders` (Dropbox folder names that didn't match a HubSpot listing) and fix with `listings.dropbox_path` or an alias. Then `POST /admin/import-email-history?key=SECRET&days=365` to index your past threads per listing. In Supabase → `listings`, fill `asking_price`, `spaces`, `summary`, `do_not_share` for each.
@@ -108,7 +111,7 @@ curl -X POST "https://DOMAIN/api/ask?key=SECRET" -H 'Content-Type: application/j
 ```
 
 ## Costs (estimates)
-Railway $5–10 · Supabase free–$25 · Claude $20–150/mo depending on volume (document extraction is the big one on first sync) · Postmark $15 · RingCentral SMS + 10DLC per plan.
+Railway Hobby $5 + usage (~$5–10) · Supabase Pro $25 (recommended: daily backups of the lead/Q&A data) · Claude $20–150/mo depending on volume (document extraction is the big one on first sync) · RingCentral SMS per plan · UptimeRobot free. No Postmark needed.
 
 ## Compliance (not legal advice; have counsel review)
 Texting people about a listing they inquired on is the defensible core; cold lists aren't, which is why CSV uploads require approval. California requires bots to disclose they're bots (B&P §17941): the first text says "AI assistant". Opt-outs, quiet hours, rate limits and the CA gate are enforced in code, not in the prompt.

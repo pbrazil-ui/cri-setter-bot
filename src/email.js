@@ -4,7 +4,8 @@
 // Signature is NOT added here when drafting: Outlook/Superhuman append yours. In send mode EMAIL_SIGNATURE_HTML is used.
 import { config } from './config.js';
 
-export const mockMailbox = []; // EMAIL_MODE=mock
+export const mockMailbox = []; // EMAIL_MODE=mock (outbound)
+export const mockInbox = []; // EMAIL_MODE=mock (inbound): [{ id, receivedDateTime, from: { emailAddress: { address } }, subject, body: { contentType, content } }]
 
 const E = config.email;
 let token = null; let exp = 0;
@@ -21,6 +22,22 @@ async function graph(method, path, body) {
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, { method, headers: { Authorization: `Bearer ${await getToken()}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   if (!res.ok) throw new Error(`Graph ${method} ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.status === 202 || res.status === 204 ? null : res.json();
+}
+
+/** Read-only: app credentials work and can open the mailbox's inbox (Mail.ReadWrite). Mail.Send can't be checked without sending. */
+export async function mailCheck() {
+  if (E.mode !== 'live') return { mode: E.mode };
+  const inbox = await graph('GET', `/users/${encodeURIComponent(E.mailbox)}/mailFolders/inbox?$select=displayName,totalItemCount`);
+  return { ok: true, mailbox: E.mailbox, inbox_items: inbox.totalItemCount, send_mode: E.sendMode, signature_set: !!E.signatureHtml,
+    problems: E.sendMode === 'send' && !E.signatureHtml ? ['EMAIL_SEND_MODE=send but EMAIL_SIGNATURE_HTML is empty: sent emails will end at "Thanks," with no name'] : [] };
+}
+
+/** Inbox messages received at/after `sinceIso`, oldest first. Needs Mail.ReadWrite (already required). */
+export async function listInboxSince(sinceIso, top = 50) {
+  if (E.mode === 'mock') return mockInbox.filter((m) => m.receivedDateTime >= sinceIso).sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime)).slice(0, top);
+  const q = new URLSearchParams({ $filter: `receivedDateTime ge ${sinceIso}`, $orderby: 'receivedDateTime asc', $top: String(top), $select: 'id,receivedDateTime,from,subject,body' });
+  const r = await graph('GET', `/users/${encodeURIComponent(E.mailbox)}/mailFolders/inbox/messages?${q}`);
+  return r?.value || [];
 }
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
