@@ -10,10 +10,9 @@ Ordered by impact. 1–6 block go-live. The rest make it sound like you and answ
    `sharing.write`, `sharing.read`. No team scopes (they make the token team-linked; team folders are reached via path-root). Generate a refresh token once (README has the
    3-line script). Confirm the team's shared-link policy allows public view-only links; if it's "team only", every
    document goes out as an email attachment instead.
-4. **Microsoft 365 app registration** for email: tenant ID, client ID, secret, application permission `Mail.ReadWrite`
-   (+ `Mail.Send` if you ever flip `EMAIL_SEND_MODE=send`), admin consent, scoped to your mailbox with an
-   application access policy. You noted the tenant needs admin action for writes; this is that.
-5. **HubSpot private app** token (contacts + deals read/write) and your owner ID.
+4. ~~Microsoft 365~~ done Nov 2 2026: Entra app, no consent, Exchange RBAC for Applications on pbrazil@cribrokerage.com only.
+   Pending: MS_* into Render after `Test-ServicePrincipalAuthorization` is verified.
+5. ~~HubSpot~~ done: service key "CRI Setter Bot" (no private apps on this account); owner ID 2145826500. Pending: token into Render.
 6. **Where lead emails land** and a real sample from each platform (Crexi, LoopNet, RVParkStore, MHVillage, HubSpot
    forms). Forward them as-is. RVParkStore's format is already covered by a test.
 

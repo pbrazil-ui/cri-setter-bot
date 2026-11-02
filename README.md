@@ -5,7 +5,7 @@ website → texted (RingCentral) or emailed (Outlook) within minutes → questio
 Dropbox documents with real math → qualified to CRI's standard → call booked → HubSpot Buyers pipeline updated.
 What it can't answer, it asks Pierce by text and remembers his answer. Every morning it sends a Broker Brief.
 
-Runs 24/7 on Railway. State in Supabase. Documents from Dropbox. Autonomy governed by `playbook/policies.json`.
+Runs 24/7 on Render (https://cri-setter-bot.onrender.com). State in Supabase. Documents from Dropbox. Autonomy governed by `playbook/policies.json`.
 
 ```
 Lead emails (Crexi/LoopNet/RVParkStore/MHVillage/forms) ─► /ingest/email ─┐
@@ -66,7 +66,7 @@ Every outbound message is classified (`first_touch.listing_email`, `reply.ca_doc
 Business texting needs an approved 10DLC campaign (RingCentral Admin → Phone System → Business SMS). Days to weeks. Use case: "replying to buyers who inquired on our property listings." Sample texts: `playbook/templates.json`.
 
 ### 1. GitHub + Claude Code
-Yes, GitHub is required: Railway deploys from it and Claude Code works out of it.
+Yes, GitHub is required: Render deploys from it and Claude Code works out of it.
 ```bash
 cd cri-setter-bot
 git init && git add . && git commit -m "CRI setter bot"
@@ -86,13 +86,13 @@ developers.ringcentral.com → Create App → REST API, server-only, **JWT** aut
 dropbox.com/developers → Create app → Scoped access, Full Dropbox. Permissions: `files.metadata.read`, `files.content.read`, `sharing.read`, `sharing.write` (no team scopes: a team scope makes the token team-linked and breaks the per-user calls; the team space is reached with the root-namespace path-root header instead). Get a refresh token once (commands in `.env.example`). Check Admin → Settings → Sharing: if links are "team only", documents go out as email attachments instead of links (handled automatically).
 
 ### 5. Microsoft 365 (email)
-Entra → App registration → application permission `Mail.ReadWrite` (add `Mail.Send` only if you later set `EMAIL_SEND_MODE=send`) → admin consent → application access policy scoped to your mailbox. Without this, email-only leads are flagged to you instead of emailed; everything else works.
+Entra → App registration (Mail.ReadWrite + Mail.Send listed, NO admin consent) → Exchange RBAC for Applications scoped to pbrazil@cribrokerage.com only, verified with `Test-ServicePrincipalAuthorization` (SETUP-PROMPT step 6). Without this, email-only leads are flagged to you instead of emailed; everything else works.
 
 ### 6. Claude API, HubSpot
-console.anthropic.com key (set a $50/mo limit to start). HubSpot → Private App → contacts + deals read/write.
+console.anthropic.com key (set a $50/mo limit to start). HubSpot → service key "CRI Setter Bot" (no private apps on this account) → contacts + deals read/write (+ notes/tasks if offered).
 
-### 7. Railway
-New Project → Deploy from GitHub → Variables → paste `.env.example` filled in → Settings → Generate Domain → put it in `PUBLIC_URL`. Check `/health`. Logs should show `[rc subscription]`, `[listings] synced`, `[dropbox sync]`.
+### 7. Render
+Web service `cri-setter-bot` (Starter, always on), auto-deploys `claude/project-setup-integrations-un1lo6`, `npm start`, health check `/health`. Set variables in Render > Environment (names in `.env.example`, mirrored in `render.yaml`). Keep `SMS_MODE=mock` and `EMAIL_SEND_MODE=draft` until `/admin/selftest` passes. Logs should show `[lease] ... running the job loops`, `[listings] synced`, `[dropbox sync]`.
 
 ### 8. Leads in
 Automatic once Microsoft 365 is connected: every minute the bot reads new emails in your inbox **from** crexi.com, loopnet.com, rvparkstore.com, mhvillage.com (and HubSpot form notifications) and turns them into leads. No Postmark, no forwarding rule. `EMAIL_POLL_LEADS=false` turns it off. `/ingest/email` still accepts Postmark/Zapier posts if you ever need them. Lists: `https://DOMAIN/upload?key=SECRET` on your phone.
@@ -113,7 +113,7 @@ curl -X POST "https://DOMAIN/api/ask?key=SECRET" -H 'Content-Type: application/j
 ```
 
 ## Costs (estimates)
-Railway Hobby $5 + usage (~$5–10) · Supabase Pro $25 (recommended: daily backups of the lead/Q&A data) · Claude $20–150/mo depending on volume (document extraction is the big one on first sync) · RingCentral SMS per plan · UptimeRobot free. No Postmark needed.
+Render Starter $7 · Supabase Pro $25 (recommended: daily backups of the lead/Q&A data) · Claude $20–150/mo depending on volume (document extraction is the big one on first sync) · RingCentral SMS per plan · UptimeRobot free. No Postmark needed.
 
 ## Compliance (not legal advice; have counsel review)
 Texting people about a listing they inquired on is the defensible core; cold lists aren't, which is why CSV uploads require approval. California requires bots to disclose they're bots (B&P §17941): the first text says "AI assistant". Opt-outs, quiet hours, rate limits and the CA gate are enforced in code, not in the prompt.

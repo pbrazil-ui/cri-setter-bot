@@ -1,0 +1,44 @@
+# Render Blueprint, for reference and disaster recovery. The live service "cri-setter-bot" was created in the Render
+# dashboard (https://cri-setter-bot.onrender.com); this file mirrors its settings so it can be rebuilt the same way.
+# No values here: every variable is set in Render > cri-setter-bot > Environment ("sync: false" = never from this file),
+# so syncing this Blueprint can never overwrite a key or flip SMS/email modes.
+services:
+  - type: web
+    name: cri-setter-bot
+    runtime: node
+    plan: starter            # always on; free instances sleep and would miss texts
+    branch: claude/project-setup-integrations-un1lo6
+    autoDeploy: true
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    numInstances: 1          # one instance; deploy overlap is handled by the job lease (supabase/schema.sql)
+    envVars:
+      - { key: TIMEZONE, sync: false }
+      - { key: DB_MODE, sync: false }
+      - { key: SMS_MODE, sync: false }             # mock until /admin/selftest passes, then live
+      - { key: LLM_MODE, sync: false }
+      - { key: EMAIL_SEND_MODE, sync: false }      # draft until /admin/selftest passes, then send
+      - { key: DISCLOSE_AI, sync: false }
+      - { key: PUBLIC_URL, sync: false }
+      - { key: INGEST_SECRET, sync: false }
+      - { key: SUPABASE_URL, sync: false }
+      - { key: SUPABASE_SERVICE_ROLE_KEY, sync: false }
+      - { key: ANTHROPIC_API_KEY, sync: false }
+      - { key: HUBSPOT_TOKEN, sync: false }        # HubSpot service key "CRI Setter Bot" (Bearer)
+      - { key: HUBSPOT_OWNER_ID, sync: false }
+      - { key: RC_SERVER, sync: false }
+      - { key: RC_CLIENT_ID, sync: false }
+      - { key: RC_CLIENT_SECRET, sync: false }
+      - { key: RC_JWT, sync: false }
+      - { key: RC_FROM_NUMBER, sync: false }
+      - { key: RC_VERIFICATION_TOKEN, sync: false }
+      - { key: OWNER_PHONE, sync: false }
+      - { key: OWNER_EMAIL, sync: false }
+      - { key: EMAIL_MAILBOX, sync: false }        # pbrazil@cribrokerage.com only
+      - { key: MS_TENANT_ID, sync: false }
+      - { key: MS_CLIENT_ID, sync: false }
+      - { key: MS_CLIENT_SECRET, sync: false }
+      - { key: DROPBOX_APP_KEY, sync: false }
+      - { key: DROPBOX_APP_SECRET, sync: false }
+      - { key: DROPBOX_REFRESH_TOKEN, sync: false }

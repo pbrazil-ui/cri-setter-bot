@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { mostRestrictive } from './listings.js';
 import { db } from './db/index.js';
 import { now } from './clock.js';
+import { notifyOwner } from './notify.js';
 
 const hs = config.hubspot;
 const S = hs.stages;
@@ -22,12 +23,21 @@ async function api(method, path, body) {
     headers: { Authorization: `Bearer ${hs.token}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`HubSpot ${method} ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) { const e = new Error(`HubSpot ${method} ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`); e.status = res.status; e.path = path; throw e; }
   return res.status === 204 ? null : res.json();
+}
+// A 401/403 means the HubSpot service key lacks a scope: tell Pierce once per object type, then just log.
+const scopeAlerted = new Set();
+async function scopeAlert(e) {
+  if (![401, 403].includes(e.status)) return;
+  const obj = String(e.path || '').match(/objects\/(\w+)/)?.[1] || 'api';
+  if (scopeAlerted.has(obj)) return;
+  scopeAlerted.add(obj);
+  await notifyOwner(`HubSpot refused the bot's ${obj} request (${e.status}). The "CRI Setter Bot" service key is missing a scope for ${obj}${obj === 'notes' || obj === 'tasks' ? ` (look for crm.objects.${obj}.write in the key's scope list)` : ''}. Leads still get answered; HubSpot logging for ${obj} is paused until it's added.`);
 }
 const safe = (fn) => async (...args) => {
   if (!enabled()) return null;
-  try { return await fn(...args); } catch (e) { console.error('[hubspot]', e.message); return null; }
+  try { return await fn(...args); } catch (e) { console.error('[hubspot]', e.message); await scopeAlert(e); return null; }
 };
 
 // ---------- stage logic (pure, unit-tested) ----------
@@ -75,14 +85,25 @@ export const setNextStep = safe(async (leadId, text) => {
 });
 
 /** Read-only: token works for contacts and deals, and both pipelines are reachable. */
+/**
+ * Read-only check of the HubSpot service key (HUBSPOT_TOKEN, a Bearer token). Contacts + deals read are required.
+ * Notes and tasks are probed by READ only (a write can't be tested without creating a record); a 403 there means the
+ * key likely needs crm.objects.notes / crm.objects.tasks scopes for the bot's logging and call tasks.
+ */
 export async function hubspotCheck() {
-  if (!enabled()) return { ok: false, problems: ['HUBSPOT_TOKEN not set'] };
+  if (!enabled()) return { ok: false, problems: ['HUBSPOT_TOKEN (the HubSpot service key) not set'] };
   const one = (pipeline) => api('POST', '/crm/v3/objects/deals/search', { filterGroups: [{ filters: [{ propertyName: 'pipeline', operator: 'EQ', value: pipeline }] }], limit: 1 });
   const [buyers, sellers] = await Promise.all([one(hs.buyersPipeline), one(hs.sellersPipeline)]);
   await api('GET', '/crm/v3/objects/contacts?limit=1');
-  const problems = [];
-  if (!sellers.total) problems.push(`Sellers pipeline ${hs.sellersPipeline} has no deals visible to this token`);
-  return { ok: !problems.length, buyers_deals: buyers.total, sellers_deals: sellers.total, problems };
+  const problems = []; const warnings = [];
+  if (!sellers.total) problems.push(`Sellers pipeline ${hs.sellersPipeline} has no deals visible to this service key`);
+  for (const obj of ['notes', 'tasks']) {
+    try { await api('GET', `/crm/v3/objects/${obj}?limit=1`); } catch (e) {
+      if ([401, 403].includes(e.status)) warnings.push(`service key can't read ${obj} (${e.status}): add crm.objects.${obj}.read/.write if the key offers them, or ${obj === 'tasks' ? 'call tasks fall back to texts' : 'notes are skipped'}`);
+      else throw e;
+    }
+  }
+  return { ok: !problems.length, buyers_deals: buyers.total, sellers_deals: sellers.total, problems, warnings };
 }
 
 /** Map bot lead status -> { stage, lostReason } the bot wants the deal in. */

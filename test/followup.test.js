@@ -300,3 +300,34 @@ test('no code path calls Graph outside the mailbox guard', async () => {
   }
   assert.ok(readdirSync(new URL('../src', import.meta.url)).length > 0);
 });
+
+test('Render deploy overlap: only the instance holding the lease runs the loops; it hands over on shutdown', async () => {
+  assert.equal(await db.claimLease('old', 60), true);
+  assert.equal(await db.claimLease('new', 60), false, 'new instance waits while the old one holds it');
+  assert.equal(await db.claimLease('old', 60), true, 'holder renews');
+  await db.releaseLease('old'); // SIGTERM on the old instance
+  assert.equal(await db.claimLease('new', 60), true, 'new instance takes over at once');
+  setNow(day(0, 1)); // a crashed holder's lease simply expires
+  assert.equal(await db.claimLease('third', 60), true);
+});
+
+test('Supabase client is created lazily: importing without keys does not crash, the config check reports them', async () => {
+  const mod = await import('../src/db/supabase.js');
+  assert.ok(mod.db.getSetting, 'imports cleanly without SUPABASE_* set');
+  await assert.rejects(() => mod.db.getSetting('x'), /SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/);
+});
+
+test('HubSpot 403 (service key missing a scope): Pierce is told once per object, leads keep flowing', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, o) => (new URL(url).pathname === '/crm/v3/objects/notes'
+    ? { ok: false, status: 403, json: async () => ({}), text: async () => 'MISSING_SCOPES' } : realFetch(url, o));
+  try {
+    await ingestEmail(crexi());
+    await sms(BUYER, 'cash buyer');
+    await replyTick();
+    const alerts = ownerLog.filter((t) => /HubSpot refused the bot's notes request \(403\)/.test(t));
+    assert.equal(alerts.length, 1, 'one alert, not one per note');
+    assert.match(alerts[0], /crm\.objects\.notes\.write/);
+    assert.ok(toBuyer().length >= 2, 'buyer still answered');
+  } finally { globalThis.fetch = realFetch; }
+});

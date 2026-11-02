@@ -199,3 +199,23 @@ alter table approvals enable row level security;
 alter table opt_outs enable row level security;
 alter table processed_events enable row level security;
 alter table settings enable row level security;
+
+-- Nov 2 2026: Render starts the new instance before stopping the old one on every deploy. Only the instance holding
+-- this lease runs the send/follow-up loops, so two instances never text the same buyer. service_role only.
+create or replace function claim_job_lease(p_holder text, p_ttl_seconds int)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  insert into settings (key, value) values ('job_lease', jsonb_build_object('holder', p_holder, 'until', now() + make_interval(secs => p_ttl_seconds)))
+  on conflict (key) do update set value = excluded.value
+    where settings.value->>'holder' = p_holder or coalesce((settings.value->>'until')::timestamptz, now()) <= now();
+  return exists (select 1 from settings where key = 'job_lease' and value->>'holder' = p_holder);
+end $$;
+create or replace function release_job_lease(p_holder text)
+returns void language sql security definer set search_path = public as $$
+  update settings set value = jsonb_set(value, '{until}', to_jsonb(now() - interval '1 second'))
+  where key = 'job_lease' and value->>'holder' = p_holder;
+$$;
+revoke all on function claim_job_lease(text, int) from public, anon, authenticated;
+revoke all on function release_job_lease(text) from public, anon, authenticated;
+grant execute on function claim_job_lease(text, int) to service_role;
+grant execute on function release_job_lease(text) to service_role;

@@ -33,15 +33,22 @@ async function graph(method, path, body) {
   return res.status === 202 || res.status === 204 ? null : res.json();
 }
 
-/** Read-only: app credentials work and can open the mailbox's inbox (Mail.ReadWrite). Mail.Send can't be checked without sending. */
+/**
+ * Read-only: a REAL scoped call on Pierce's inbox. Access comes from Exchange RBAC for Applications scoped to his
+ * mailbox, with NO tenant-wide consent in Entra, so the token carries no Mail.* roles and none are expected here.
+ * Mail.Send can't be checked without sending; Test-ServicePrincipalAuthorization covers it (SETUP-PROMPT 6f).
+ */
 export async function mailCheck() {
   if (E.mode !== 'live') return { mode: E.mode };
   const problems = []; const inboxes = {};
   for (const mb of [...new Set([E.mailbox, ...E.readMailboxes])]) {
-    try { inboxes[mb] = (await graph('GET', `/users/${encodeURIComponent(mb)}/mailFolders/inbox?$select=totalItemCount`)).totalItemCount; } catch (e) { problems.push(`${mb}: ${e.message.slice(0, 160)}`); }
+    try { inboxes[mb] = (await graph('GET', `/users/${encodeURIComponent(mb)}/mailFolders/inbox?$select=totalItemCount`)).totalItemCount; } catch (e) {
+      const hint = / 40[13]/.test(e.message) ? ' (Exchange RBAC for Applications: check the "Application Mail.ReadWrite" role assignment on the CRI Setter Bot service principal, scoped to this mailbox; new assignments can take a while to apply)' : '';
+      problems.push(`${mb}: ${e.message.slice(0, 160)}${hint}`);
+    }
   }
   // No probe of anyone else's mailbox, ever (Pierce, Nov 2 2026). The Exchange policy is verified by the admin with
-  // Test-ApplicationAccessPolicy (SETUP-PROMPT 6f), not by the bot knocking on Dylan's inbox.
+  // Test-ServicePrincipalAuthorization (SETUP-PROMPT 6f, RBAC for Applications), not by the bot knocking on Dylan's inbox.
   if (E.sendMode === 'send' && !E.signatureHtml) problems.push('EMAIL_SEND_MODE=send but EMAIL_SIGNATURE_HTML is empty: sent emails will end at "Thank you," with no name');
   return { ok: !problems.length, send_from: E.mailbox, inboxes, send_mode: E.sendMode, problems };
 }

@@ -111,21 +111,65 @@ export async function expireTick() {
   return hit?.length || 0;
 }
 
+// ---------- one instance runs the loops (Render overlaps old and new instances during every deploy) ----------
+const HOLDER = `${process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || 'local'}:${process.pid}:${Math.random().toString(36).slice(2, 8)}`;
+const LEASE_TTL_SEC = 60;
+let leader = false; let leaseWarned = false; let stopping = false;
+
+/** Claim or renew the job lease. Without the DB function (schema.sql not re-run) it falls back to running, loudly. */
+export async function renewLease() {
+  if (stopping) return (leader = false);
+  try {
+    const got = await db.claimLease(HOLDER, LEASE_TTL_SEC);
+    if (got && !leader) console.log(`[lease] ${HOLDER} is running the job loops`);
+    if (!got && leader) console.log('[lease] another instance took over the job loops');
+    leader = got;
+  } catch (e) {
+    if (e.missingFunction) {
+      if (!leaseWarned) { console.warn('[lease] claim_job_lease() missing: re-run supabase/schema.sql. Running loops without a lease (overlapping deploys could double-send).'); leaseWarned = true; }
+      leader = true;
+    } else console.error('[lease]', e.message); // transient: keep the current state
+  }
+  return leader;
+}
+export const isLeader = () => leader;
+const onlyLeader = (fn) => async () => (leader && !stopping ? fn() : null);
+
 export function startJobs() {
-  setInterval(briefTick, 60 * 1000);
-  setInterval(() => importEmailHistory().then((r) => r && console.log('[email history]', JSON.stringify(r))).catch((e) => console.error('[email history]', e.message)), 6 * 3600 * 1000);
-  setTimeout(() => importEmailHistory().then((r) => r && console.log('[email history]', JSON.stringify(r))).catch((e) => console.error('[email history]', e.message)), 120 * 1000);
-  setInterval(expireTick, 10 * 60 * 1000);
-  setInterval(replyTick, 20 * 1000);
-  setInterval(firstTouchTick, 20 * 1000);
-  setInterval(inboxTick, 60 * 1000);
-  setTimeout(inboxTick, 15 * 1000);
-  setInterval(docSync, 3600 * 1000);
-  setTimeout(docSync, 60 * 1000); // after HubSpot listings sync
-  renewSubscription();
-  syncListings();
-  setInterval(tick, config.tickSeconds * 1000);
-  setInterval(renewSubscription, 12 * 3600 * 1000);
-  setInterval(syncListings, 3600 * 1000);
-  setTimeout(tick, 5000);
+  const timers = [];
+  const every = (fn, ms) => timers.push(setInterval(onlyLeader(fn), ms));
+  const once = (fn, ms) => timers.push(setTimeout(onlyLeader(fn), ms));
+  const history = () => importEmailHistory().then((r) => r && console.log('[email history]', JSON.stringify(r))).catch((e) => console.error('[email history]', e.message));
+
+  timers.push(setInterval(renewLease, 15 * 1000));
+  renewLease().then(() => {
+    once(renewSubscription, 0);
+    once(syncListings, 0);
+  });
+  every(briefTick, 60 * 1000);
+  every(history, 6 * 3600 * 1000);
+  once(history, 120 * 1000);
+  every(expireTick, 10 * 60 * 1000);
+  every(replyTick, 20 * 1000);
+  every(firstTouchTick, 20 * 1000);
+  every(inboxTick, 60 * 1000);
+  once(inboxTick, 15 * 1000);
+  every(docSync, 3600 * 1000);
+  once(docSync, 60 * 1000); // after HubSpot listings sync
+  every(tick, config.tickSeconds * 1000);
+  every(renewSubscription, 12 * 3600 * 1000);
+  every(syncListings, 3600 * 1000);
+  once(tick, 5000);
+
+  // Render sends SIGTERM to the old instance once the new one is healthy: stop the loops and hand over the lease.
+  const shutdown = async (sig) => {
+    if (stopping) return;
+    stopping = true; leader = false;
+    timers.forEach((t) => { clearInterval(t); clearTimeout(t); });
+    try { await db.releaseLease(HOLDER); } catch { /* lease expires on its own in 60s */ }
+    console.log(`[shutdown] ${sig}: loops stopped, lease released`);
+    setTimeout(() => process.exit(0), 500).unref();
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 }

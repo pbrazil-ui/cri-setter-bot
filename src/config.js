@@ -1,4 +1,4 @@
-try { await import('dotenv/config'); } catch { /* dotenv optional; Railway injects env vars */ }
+try { await import('dotenv/config'); } catch { /* dotenv optional; Render injects env vars */ }
 
 const env = process.env;
 const bool = (v, d) => (v === undefined || v === '' ? d : ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase()));

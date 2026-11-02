@@ -9,6 +9,7 @@ import { hubspotCheck } from './hubspot.js';
 import { dropboxCheck } from './dropbox.js';
 import { mailCheck } from './email.js';
 import { rules } from './docs/classify.js';
+import { isLeader } from './jobs.js';
 
 const withTimeout = (p, ms = 15000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`timed out after ${ms / 1000}s`)), ms))]);
 const run = async (fn) => { try { return await withTimeout(fn()); } catch (e) { return { ok: false, problems: [e.message.slice(0, 400)] }; } };
@@ -28,7 +29,8 @@ async function databaseCheck() {
   const back = await db.getSetting('selftest_at');
   const listings = await db.listListings();
   const by = listings.reduce((a, l) => ({ ...a, [l.status]: (a[l.status] || 0) + 1 }), {});
-  return { ok: back === stamp, mode: config.dbMode, listings: by, problems: back === stamp ? [] : ['settings write did not read back'] };
+  const problems = [...(back === stamp ? [] : ['settings write did not read back']), ...(await db.schemaCheck())];
+  return { ok: !problems.length, mode: config.dbMode, listings: by, problems };
 }
 
 export async function selftest() {
@@ -46,6 +48,7 @@ export async function selftest() {
   return {
     ok: !failing.length, failing,
     autonomy: { test_mode: p.test_mode, emergency_stop: p.emergency_stop, paused: (await db.getSetting('paused')) === true },
+    this_instance_runs_jobs: isLeader(),
     modes: { db: config.dbMode, sms: config.smsMode, llm: config.llmMode, email: config.email.mode, dropbox: config.dropbox.mode },
     checks,
   };

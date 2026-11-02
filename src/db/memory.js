@@ -11,6 +11,13 @@ export const db = {
   _reset() { t.audit = []; t.leads = []; t.messages = []; t.approvals = []; t.listings = []; t.documents = []; t.chunks = []; t.units = []; t.qa = []; t.oq = []; t.opt_outs.clear(); t.events.clear(); t.settings.clear(); seq = 1; },
 
   async getSetting(k) { return t.settings.get(k) ?? null; },
+  async schemaCheck() { return []; },
+  async claimLease(holder, ttlSec) {
+    const cur = t.settings.get('job_lease'); const nowMs = +new Date(ts());
+    if (!cur || cur.holder === holder || +new Date(cur.until) <= nowMs) { t.settings.set('job_lease', { holder, until: new Date(nowMs + ttlSec * 1000).toISOString() }); return true; }
+    return false;
+  },
+  async releaseLease(holder) { const cur = t.settings.get('job_lease'); if (cur?.holder === holder) cur.until = new Date(+new Date(ts()) - 1000).toISOString(); },
   async setSetting(k, v) { t.settings.set(k, v); },
   async claimEvent(id) { if (t.events.has(id)) return false; t.events.add(id); return true; },
 
