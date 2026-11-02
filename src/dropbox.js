@@ -22,7 +22,14 @@ async function getToken() {
 // Dropbox-API-Arg must be ASCII: escape anything else (filenames contain en dashes)
 const asciiJson = (o) => JSON.stringify(o).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
+// Pierce (Nov 2 2026): never delete. The bot only reads files and creates view-only links.
+const FORBIDDEN = /(^|\/)(delete|delete_v2|delete_batch|permanently_delete|move|move_v2|move_batch|move_batch_v2|revoke_shared_link|remove_folder_member|remove_file_member|unshare_folder|unshare_file|relinquish)/;
+export function assertDropboxAllowed(endpoint) {
+  if (FORBIDDEN.test(endpoint)) throw new Error(`Refused: the bot never deletes, moves or unshares in Dropbox (${endpoint})`);
+}
+
 async function rpc(endpoint, body, { withRoot = true } = {}) {
+  assertDropboxAllowed(endpoint);
   const headers = { Authorization: `Bearer ${await getToken()}`, 'Content-Type': 'application/json' };
   if (withRoot && pathRoot) headers['Dropbox-API-Path-Root'] = asciiJson({ '.tag': 'root', root: pathRoot });
   const res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, { method: 'POST', headers, body: body === null ? null : JSON.stringify(body) });

@@ -74,7 +74,19 @@ RULES
       Then "Grant admin consent". Both must show a green check.
    d. Certificates & secrets > New client secret, 24 months. Copy the VALUE (not the Secret ID) = MS_CLIENT_SECRET.
       Tell Pierce the expiry date so he can calendar it.
-   e. Confirm with Pierce that pbrazil@cribrokerage.com is a mailbox in THIS tenant.
+   e. Confirm with Pierce that pbrazil@cribrokerage.com and pbrazil@cricommercial.com are in THIS tenant, and whether
+      they are one mailbox (alias) or two. The bot reads and sends ONLY from these two, never Dylan's, Duane's or anyone's.
+   f. REQUIRED, admin only: lock the app to Pierce's mailbox in Exchange. Without this, Mail.ReadWrite would let the
+      app open every mailbox in the company (the code refuses, but the credential itself must not be able to).
+      Give the admin these commands for Terminal on a Mac (PowerShell: `brew install powershell`, then `pwsh`):
+        Install-Module ExchangeOnlineManagement -Scope CurrentUser
+        Connect-ExchangeOnline -UserPrincipalName <admin email>
+        New-DistributionGroup -Name "CRI Setter Bot Mailboxes" -Alias setterbotmailboxes -Type Security -Members pbrazil@cribrokerage.com
+        (if pbrazil@cricommercial.com is a separate mailbox: Add-DistributionGroupMember setterbotmailboxes -Member pbrazil@cricommercial.com)
+        New-ApplicationAccessPolicy -AppId <MS_CLIENT_ID> -PolicyScopeGroupId setterbotmailboxes -AccessRight RestrictAccess -Description "CRI setter bot: Pierce only"
+        Test-ApplicationAccessPolicy -Identity pbrazil@cribrokerage.com -AppId <MS_CLIENT_ID>    -> Granted
+        Test-ApplicationAccessPolicy -Identity DylanB@cricommercial.com -AppId <MS_CLIENT_ID>   -> Denied
+      It can take up to an hour to apply. The self-test (step 7g) flags it if the app can still open Dylan's mailbox.
 
 7. RAILWAY (railway.com). Railway, not Vercel: the bot is a server that runs timers all day.
    a. New Project > Deploy from GitHub repo > pbrazil-ui/cri-setter-bot.
@@ -123,6 +135,10 @@ DISCLOSE_AI=false
    g. Ask Pierce to open PUBLIC_URL/admin/selftest?key=INGEST_SECRET himself (the key is in the URL, so you don't type it).
       It checks Supabase, Claude, RingCentral (number is SMS-enabled, webhook active), HubSpot, Dropbox and Outlook
       without sending anything. Every check should say "ok": true. Fix anything under "problems" before going further.
+
+7h. DYLAN'S LEADS (Dylan does this in his own Outlook; the bot never reads his inbox):
+   Outlook > Settings > Mail > Rules > Add new rule: From contains crexi.com, loopnet.com, rvparkstore.com,
+   mhvillage.com > Forward to pbrazil@cribrokerage.com. The bot accepts "FW:" lead emails from Dylan only.
 
 8. UPTIME (uptimerobot.com, free plan)
    New monitor > HTTP(s) > URL: PUBLIC_URL/health > every 5 minutes > alert contact: Pierce's email and cell.

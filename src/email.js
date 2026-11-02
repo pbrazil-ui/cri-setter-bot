@@ -19,7 +19,15 @@ async function getToken() {
   if (!res.ok) throw new Error(`Graph auth ${res.status}: ${await res.text()}`);
   const j = await res.json(); token = j.access_token; exp = Date.now() + j.expires_in * 1000; return token;
 }
+/** Every Graph call goes through here: Pierce's mailboxes only, and nothing is ever deleted. */
+export function assertGraphAllowed(method, path) {
+  if (String(method).toUpperCase() === 'DELETE' || /\/(move|permanentDelete)\b/i.test(path)) throw new Error('Refused: the bot never deletes or moves mail (Pierce, Nov 2 2026)');
+  const mb = decodeURIComponent(String(path).match(/^\/users\/([^/?]+)/)?.[1] || '').toLowerCase();
+  if (!mb || !E.allowedMailboxes.includes(mb)) throw new Error(`Refused: mailbox "${mb || path}" is not one of Pierce's (${E.allowedMailboxes.join(', ')})`);
+}
+
 async function graph(method, path, body) {
+  assertGraphAllowed(method, path);
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, { method, headers: { Authorization: `Bearer ${await getToken()}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   if (!res.ok) throw new Error(`Graph ${method} ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.status === 202 || res.status === 204 ? null : res.json();
@@ -28,16 +36,27 @@ async function graph(method, path, body) {
 /** Read-only: app credentials work and can open the mailbox's inbox (Mail.ReadWrite). Mail.Send can't be checked without sending. */
 export async function mailCheck() {
   if (E.mode !== 'live') return { mode: E.mode };
-  const inbox = await graph('GET', `/users/${encodeURIComponent(E.mailbox)}/mailFolders/inbox?$select=displayName,totalItemCount`);
-  return { ok: true, mailbox: E.mailbox, inbox_items: inbox.totalItemCount, send_mode: E.sendMode, signature_set: !!E.signatureHtml,
-    problems: E.sendMode === 'send' && !E.signatureHtml ? ['EMAIL_SEND_MODE=send but EMAIL_SIGNATURE_HTML is empty: sent emails will end at "Thanks," with no name'] : [] };
+  const problems = []; const inboxes = {};
+  for (const mb of [...new Set([E.mailbox, ...E.readMailboxes])]) {
+    try { inboxes[mb] = (await graph('GET', `/users/${encodeURIComponent(mb)}/mailFolders/inbox?$select=totalItemCount`)).totalItemCount; } catch (e) { problems.push(`${mb}: ${e.message.slice(0, 160)}`); }
+  }
+  // the app should NOT be able to open anyone else's mailbox (Exchange application access policy, SETUP-PROMPT 6f)
+  const probe = E.trustedForwarders[0];
+  if (probe) {
+    try {
+      const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(probe)}/mailFolders/inbox?$select=id`, { headers: { Authorization: `Bearer ${await getToken()}` } });
+      if (res.ok) problems.push(`the app can open ${probe}'s mailbox: add the Exchange application access policy (SETUP-PROMPT step 6f) so it can only reach Pierce's`);
+    } catch { /* network error: not a finding */ }
+  }
+  if (E.sendMode === 'send' && !E.signatureHtml) problems.push('EMAIL_SEND_MODE=send but EMAIL_SIGNATURE_HTML is empty: sent emails will end at "Thank you," with no name');
+  return { ok: !problems.length, send_from: E.mailbox, inboxes, send_mode: E.sendMode, problems };
 }
 
 /** Inbox messages received at/after `sinceIso`, oldest first. Needs Mail.ReadWrite (already required). */
-export async function listInboxSince(sinceIso, top = 50) {
-  if (E.mode === 'mock') return mockInbox.filter((m) => m.receivedDateTime >= sinceIso).sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime)).slice(0, top);
+export async function listInboxSince(sinceIso, top = 50, mailbox = E.mailbox) {
+  if (E.mode === 'mock') { assertGraphAllowed('GET', `/users/${mailbox}/mailFolders/inbox/messages`); return mockInbox.filter((m) => (m.mailbox || E.mailbox) === mailbox && m.receivedDateTime >= sinceIso).sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime)).slice(0, top); }
   const q = new URLSearchParams({ $filter: `receivedDateTime ge ${sinceIso}`, $orderby: 'receivedDateTime asc', $top: String(top), $select: 'id,conversationId,receivedDateTime,from,subject,body' });
-  const r = await graph('GET', `/users/${encodeURIComponent(E.mailbox)}/mailFolders/inbox/messages?${q}`);
+  const r = await graph('GET', `/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages?${q}`);
   return r?.value || [];
 }
 

@@ -11,7 +11,12 @@ const S = hs.stages;
 const enabled = () => !!hs.token;
 
 export const hubspotLog = []; // for tests / debugging
+// Pierce (Nov 2 2026): never delete. No DELETE, no archive, no merge, ever.
+export function assertHubspotAllowed(method, path) {
+  if (String(method).toUpperCase() === 'DELETE' || /\/(archive|merge|gdpr-delete)\b/i.test(path)) throw new Error(`Refused: the bot never deletes HubSpot records (${method} ${path})`);
+}
 async function api(method, path, body) {
+  assertHubspotAllowed(method, path);
   const res = await fetch(`https://api.hubapi.com${path}`, {
     method,
     headers: { Authorization: `Bearer ${hs.token}`, 'Content-Type': 'application/json' },
@@ -43,13 +48,15 @@ export const createTask = safe(async (leadId, { key, subject, body, dueAt, type 
   if (lead.hubspot_tasks?.[key]) return lead.hubspot_tasks[key];
   const contactId = lead.hubspot_contact_id || (await upsertContact(lead));
   const dealId = await dealIdFor(lead);
+  const listing = lead.listing_id ? await db.getListing(lead.listing_id) : null;
+  const owner = listing?.owner_id || hs.ownerId; // the call goes to whoever owns the listing (Pierce or Dylan)
   const associations = [];
   if (contactId) associations.push({ to: { id: contactId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 204 }] });
   if (dealId) associations.push({ to: { id: dealId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 216 }] });
   const t = await api('POST', '/crm/v3/objects/tasks', {
     properties: {
       hs_timestamp: dueAt, hs_task_subject: subject, hs_task_body: body, hs_task_status: 'NOT_STARTED',
-      hs_task_priority: priority, hs_task_type: type, ...(hs.ownerId ? { hubspot_owner_id: hs.ownerId } : {}),
+      hs_task_priority: priority, hs_task_type: type, ...(owner ? { hubspot_owner_id: owner } : {}),
     },
     associations,
   });
@@ -166,7 +173,7 @@ export const ensureBuyerDeal = safe(async (lead, listing) => {
       pipeline: hs.buyersPipeline,
       dealstage: S.newBuyer,
       ...(listing?.listing_code ? { listing_code: listing.listing_code } : {}),
-      ...(hs.ownerId ? { hubspot_owner_id: hs.ownerId } : {}),
+      ...(listing?.owner_id || hs.ownerId ? { hubspot_owner_id: listing?.owner_id || hs.ownerId } : {}), // Dylan's listing -> Dylan's buyer deal
       ...(hs.platformProperty && lead.platform ? { [hs.platformProperty]: lead.platform } : {}),
     };
     const created = await api('POST', '/crm/v3/objects/deals', {
@@ -229,28 +236,29 @@ export function listingStatusFor(p) {
 
 /** Pull listings (Listed, Under Contract, Closed Won) from the Sellers pipeline into the local listings table. */
 export const syncListingsFromHubSpot = safe(async () => {
-  const props = ['dealname', 'dealstage', 'listing_code', 'listing_status', 'crexi_listing_url', 'ca_link', 'listing_hub_url'];
+  const props = ['dealname', 'dealstage', 'hubspot_owner_id', 'listing_code', 'listing_status', 'crexi_listing_url', 'ca_link', 'listing_hub_url'];
   const st = hs.sellerStages;
   const existing = new Map((await db.listListings()).map((l) => [l.hubspot_deal_id, l]));
   let after; let count = 0;
   do {
     const page = await api('POST', '/crm/v3/objects/deals/search', {
       filterGroups: [
-        { filters: [{ propertyName: 'pipeline', operator: 'EQ', value: hs.sellersPipeline }, { propertyName: 'dealstage', operator: 'IN', values: [st.listed, st.underContract, st.closedWon] }] },
-        { filters: [{ propertyName: 'pipeline', operator: 'EQ', value: hs.sellersPipeline }, { propertyName: 'listing_status', operator: 'IN', values: ['on_market', 'off_market', 'under_contract', 'sold'] }] },
+        // only Pierce's and Dylan's listings (other agents' deals in the portal are never imported)
+        { filters: [{ propertyName: 'pipeline', operator: 'EQ', value: hs.sellersPipeline }, { propertyName: 'hubspot_owner_id', operator: 'IN', values: hs.listingOwners }, { propertyName: 'dealstage', operator: 'IN', values: [st.listed, st.underContract, st.closedWon] }] },
+        { filters: [{ propertyName: 'pipeline', operator: 'EQ', value: hs.sellersPipeline }, { propertyName: 'hubspot_owner_id', operator: 'IN', values: hs.listingOwners }, { propertyName: 'listing_status', operator: 'IN', values: ['on_market', 'off_market', 'under_contract', 'sold'] }] },
       ],
       properties: props, limit: 100, after,
     });
     for (const d of page.results || []) {
       const p = d.properties;
       const hsStatus = listingStatusFor(p);
-      if (!hsStatus) continue;
+      if (!hsStatus || !hs.listingOwners.includes(String(p.hubspot_owner_id))) continue; // belt and braces
       const prev = existing.get(d.id);
       // a folder in Dropbox "02 - Under Contract" keeps it under contract even if HubSpot still says Listed
       const status = mostRestrictive(hsStatus, prev?.facts?.dropbox_stage === 'under_contract' ? 'in_escrow' : null);
       await db.upsertListing({
         hubspot_deal_id: d.id, listing_code: p.listing_code || null, name: p.dealname, // no code -> buyer deals key on hubspot_deal_id
-        status,
+        status, owner_id: String(p.hubspot_owner_id),
         crexi_url: p.crexi_listing_url || null, ca_link: p.ca_link || null, hub_url: p.listing_hub_url || null,
       });
       count++;

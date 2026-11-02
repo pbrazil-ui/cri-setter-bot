@@ -65,6 +65,7 @@ alter table leads add column if not exists first_email_at timestamptz; -- first-
 -- Nov 2 2026: call tasks for Pierce and the deal's next step
 alter table leads add column if not exists hubspot_tasks jsonb not null default '{}'::jsonb; -- key -> HubSpot task id (dedupe)
 alter table leads add column if not exists next_step text;                                     -- mirrors the deal's Next step
+alter table listings add column if not exists owner_id text;                                   -- HubSpot owner: Pierce 2145826500 / Dylan 683980338
 create index if not exists leads_email on leads (lower(email));
 
 create table if not exists messages (

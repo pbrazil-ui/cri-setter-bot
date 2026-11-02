@@ -39,7 +39,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - `src/db/` `supabase.js` (prod) / `memory.js` (tests), same interface · `supabase/schema.sql`
 
 ## Commands
-- `npm install && npm test` (60 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
+- `npm install && npm test` (64 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
 - `npm run dev` local server, all mocks, :3000
 - `open "$PUBLIC_URL/admin/selftest?key=$INGEST_SECRET"` after any deploy or key change: every check should be ok
 - `curl -X POST "$PUBLIC_URL/admin/sync-docs?key=$INGEST_SECRET"` force a Dropbox sync
@@ -66,6 +66,9 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 15. Follow-up (elite-cre-sales): days 1/3/7 alternating text and email, then `nurture` status: email every 14 days to day 91, then monthly. Long-tail texts off unless `NURTURE_SMS=true` (Pierce confirmed Nov 2 2026: "email only after this"; texts are for active conversations and the day 1/3/7 touches, and a nurture lead who replies is back in conversation on their channel with the cadence restarted). Email is SENT, not drafted (`EMAIL_SEND_MODE=send`, Pierce Nov 2 2026); buyer email replies are read from the inbox and answered in-thread, unless Pierce already replied in that conversation.
 13. Listings under contract or sold: no documents/numbers/past correspondence (tools.js), first contact says so and asks criteria, Pierce gets a MATCH text. Seller names never reach buyers: `publicListingName()` strips "Seller Name - " from HubSpot deal names; buyer-facing text uses the platform's property name first.
 12. One Railway replica. Tests never hit real services. Add a test for every behavior change.
+16. Mailboxes (Pierce, Nov 2 2026): read/send ONLY pbrazil@cribrokerage.com and pbrazil@cricommercial.com (`EMAIL_ALLOWED_MAILBOXES`, enforced on every Graph call by `assertGraphAllowed`). Never Dylan's, Duane's or anyone else's: Dylan is cc'd only; his listing leads arrive as his "FW:" forwards (`EMAIL_TRUSTED_FORWARDERS`). The Exchange application access policy (SETUP-PROMPT 6f) restricts the credential itself; the self-test flags it if missing.
+17. Never delete without Pierce's approval (Nov 2 2026): no deleting/moving mail, no HubSpot DELETE/archive/merge, no Dropbox delete/move/unshare. Blocked in code (`assertGraphAllowed`, `assertHubspotAllowed`, `assertDropboxAllowed`). The bot's own Supabase mirror of Dropbox documents is the only thing it removes, when the source file changes. (Moving Walnut Estates on Nov 1 was Pierce's explicit request, done by Claude Code, not the bot.)
+18. Listings: only Pierce's (`2145826500`) and Dylan's (`683980338`) HubSpot deals are imported (`HUBSPOT_LISTING_OWNERS`). Other agents' (e.g. Nolan Rockwell's Pinederosa, Dimitre Petrov's Arden Asheville) never are. A lead matching none of their listings waits for Pierce's Y (`first_touch.unmatched`). Buyer deals and call tasks are owned by the listing's owner.
 
 ## HubSpot facts (Pierce's portal, read Oct 31 2026)
 - Buyers pipeline `1100542670`: New buyer `1734608578` → Qualified `4502497982` → Offer Out `1734608577` → Under Contract `1734608579` → Closed Won `1734608582` / Closed Lost `1734608583`

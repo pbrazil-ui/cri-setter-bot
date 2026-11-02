@@ -35,9 +35,10 @@ beforeEach(async () => {
 });
 
 test('classify maps deliveries to policy keys', () => {
-  const smsLead = { phone: '+1', source: 'listing_email', status: 'engaged' };
+  const smsLead = { phone: '+1', source: 'listing_email', status: 'engaged', listing_id: 1 };
   assert.equal(classify({ kind: 'first_touch', lead: smsLead }), 'first_touch.listing_email');
-  assert.equal(classify({ kind: 'first_touch', lead: { email: 'x@y.com', source: 'listing_email' } }), 'first_touch.email');
+  assert.equal(classify({ kind: 'first_touch', lead: { email: 'x@y.com', source: 'listing_email', listing_id: 1 } }), 'first_touch.email');
+  assert.equal(classify({ kind: 'first_touch', lead: { ...smsLead, listing_id: null } }), 'first_touch.unmatched'); // maybe another agent's lead
   assert.equal(classify({ kind: 'followup', lead: { ...smsLead, status: 'in_dd' } }), 'followup.in_dd');
   assert.equal(classify({ kind: 'reply', lead: smsLead, human: true }), 'escalate.price_terms_legal');
   assert.equal(classify({ kind: 'reply', lead: smsLead, flags: { usedSensitive: true } }), 'reply.sensitive_docs');

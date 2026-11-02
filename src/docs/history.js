@@ -3,6 +3,7 @@
 // Two feeds: (a) Dropbox "05 - Correspondence" folders are picked up by the normal sync; (b) Outlook threads
 // via Graph, matched to listings by subject/body, imported by importEmailHistory().
 import { config } from '../config.js';
+import { assertGraphAllowed } from '../email.js';
 import { db } from '../db/index.js';
 import { matchListing } from '../listings.js';
 import { chunkText } from './search.js';
@@ -36,6 +37,7 @@ export async function importEmailHistory({ days = 365, maxPerListing = 60 } = {}
     const names = [listing.name, ...(listing.aliases || [])].filter(Boolean);
     const q = names.map((n) => `"${n.replace(/"/g, '')}"`).join(' OR ');
     const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(E.mailbox)}/messages?$search=${encodeURIComponent(q)}&$top=${maxPerListing}&$select=id,conversationId,subject,from,toRecipients,receivedDateTime,body,bodyPreview`;
+    assertGraphAllowed('GET', url.replace('https://graph.microsoft.com/v1.0', ''));
     const res = await fetch(url, { headers: { Authorization: `Bearer ${await getToken()}`, ConsistencyLevel: 'eventual' } });
     if (!res.ok) { report[listing.name] = `error ${res.status}`; continue; }
     const msgs = ((await res.json()).value || []).filter((m) => m.receivedDateTime >= since);

@@ -46,6 +46,12 @@ export const config = {
     maxAttachmentMb: num(env.EMAIL_MAX_ATTACHMENT_MB, 3),
     // read lead notifications (Crexi, LoopNet, ...) straight from the inbox: no Postmark, no forwarding rule
     pollLeads: bool(env.EMAIL_POLL_LEADS, true),
+    // Pierce (Nov 2 2026): ONLY his two mailboxes, never Dylan's, Duane's or anyone else's. Enforced in email.js on every
+    // Graph call; also restrict the app in Exchange (SETUP-PROMPT step 6f) so the credential itself can't reach others.
+    allowedMailboxes: list(env.EMAIL_ALLOWED_MAILBOXES, ['pbrazil@cribrokerage.com', 'pbrazil@cricommercial.com']).map((s) => s.toLowerCase()),
+    readMailboxes: list(env.EMAIL_READ_MAILBOXES, ['pbrazil@cribrokerage.com', 'pbrazil@cricommercial.com']).map((s) => s.toLowerCase()),
+    // Dylan's listing leads reach the bot only if Dylan forwards them to Pierce (his inbox is never read)
+    trustedForwarders: list(env.EMAIL_TRUSTED_FORWARDERS, ['dylanb@cricommercial.com']).map((s) => s.toLowerCase()),
   },
   dropbox: {
     mode: env.DROPBOX_MODE || (env.DROPBOX_REFRESH_TOKEN ? 'live' : 'off'), // live | mock | off
@@ -70,6 +76,8 @@ export const config = {
     token: env.HUBSPOT_TOKEN || '',
     createDeals: bool(env.HUBSPOT_CREATE_DEALS, true),
     ownerId: env.HUBSPOT_OWNER_ID || '',
+    // Pierce (Nov 2 2026): the bot works only Pierce's and Dylan's listings. HubSpot owner ids (read Nov 2 2026).
+    listingOwners: list(env.HUBSPOT_LISTING_OWNERS, ['2145826500', '683980338']),
     platformProperty: env.HUBSPOT_PLATFORM_PROPERTY || '', // optional deal property to record Crexi/LoopNet/etc.
     // Defaults = Pierce's live portal (read Oct 31 2026). Override if the pipeline changes.
     buyersPipeline: env.HUBSPOT_BUYERS_PIPELINE || '1100542670',
@@ -143,6 +151,7 @@ export function validateConfig() {
   }
   if (config.llmMode === 'live') need(config.anthropic.apiKey, 'ANTHROPIC_API_KEY');
   if (config.email.mode === 'live') for (const k of ['tenantId', 'clientId', 'clientSecret']) need(config.email[k], `MS_${k.replace(/[A-Z]/g, (c) => '_' + c).toUpperCase()}`);
+  for (const mb of [config.email.mailbox, ...config.email.readMailboxes]) if (!config.email.allowedMailboxes.includes(String(mb).toLowerCase())) missing.push(`mailbox ${mb} is not in EMAIL_ALLOWED_MAILBOXES`);
   if (config.dropbox.mode === 'live') for (const k of ['appKey', 'appSecret', 'refreshToken']) need(config.dropbox[k], `DROPBOX_${k.replace(/[A-Z]/g, (c) => '_' + c).toUpperCase()}`);
   if (config.smsMode === 'live') {
     for (const k of ['clientId', 'clientSecret', 'jwt', 'fromNumber']) need(config.rc[k], `RC_${k.replace(/[A-Z]/g, (c) => '_' + c).toUpperCase()}`);

@@ -22,6 +22,10 @@
       "mode": "approve",
       "why": "LoopNet/Crexi 'saved your listing': not an inquiry, so the text waits for Pierce's Y (TCPA). The email goes per first_touch.email."
     },
+    "first_touch.unmatched": {
+      "mode": "approve",
+      "why": "Pierce (Nov 2 2026): the bot works only his and Dylan's listings. A lead that matches none of them may be another agent's, so the first message waits for his Y."
+    },
     "first_touch.manual": {
       "mode": "approve"
     },

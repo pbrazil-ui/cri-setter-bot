@@ -20,6 +20,8 @@ export const _setPoliciesForTest = (p) => { cache = p; pinned = true; };
 /** Map a delivery to its policy key. */
 export function classify({ kind, lead, flags = {}, decision = {}, human = false, channel }) {
   const email = channel ? channel === 'email' : (lead.preferred_channel === 'email' || (!lead.phone && lead.email));
+  // no match among Pierce's/Dylan's listings: could be another agent's lead, so Pierce decides (Nov 2 2026)
+  if (kind === 'first_touch' && !lead.listing_id) return 'first_touch.unmatched';
   if (kind === 'first_touch') return email ? 'first_touch.email' : `first_touch.${lead.source || 'manual'}`;
   if (kind === 'followup') return lead.status === 'in_dd' ? 'followup.in_dd' : 'followup.pre_ca';
   if (kind === 'answer') return 'answer.from_pierce';

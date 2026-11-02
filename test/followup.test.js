@@ -11,11 +11,11 @@ Object.assign(process.env, {
 });
 
 // ---- fake HubSpot: records deals, notes, tasks, next steps ----
-const hs = { deals: {}, notes: [], tasks: [], c: 0 };
+const hs = { deals: {}, notes: [], tasks: [], searches: [], c: 0 };
 globalThis.fetch = async (url, o = {}) => {
   const u = new URL(url); const b = o.body ? JSON.parse(o.body) : null; const m = o.method;
   const ok = (j) => ({ ok: true, status: 200, json: async () => j, text: async () => JSON.stringify(j) });
-  if (u.pathname.endsWith('/search')) return ok({ results: [], total: 0 });
+  if (u.pathname.endsWith('/search')) { hs.searches.push({ path: u.pathname, body: b }); return ok({ results: [], total: 0 }); }
   if (u.pathname === '/crm/v3/objects/contacts' && m === 'POST') return ok({ id: `c${++hs.c}` });
   if (u.pathname === '/crm/v3/objects/deals' && m === 'POST') { const id = `d${Object.keys(hs.deals).length + 1}`; hs.deals[id] = { ...b.properties }; return ok({ id }); }
   const dm = u.pathname.match(/deals\/(\w+)$/);
@@ -53,7 +53,7 @@ const leadNow = () => db.findLeadByPhone(BUYER);
 
 beforeEach(async () => {
   db._reset(); mockOutbox.length = 0; mockMailbox.length = 0; mockInbox.length = 0; mockSentItems.length = 0; ownerLog.length = 0;
-  Object.assign(hs, { deals: {}, notes: [], tasks: [], c: 0 });
+  Object.assign(hs, { deals: {}, notes: [], tasks: [], searches: [], c: 0 });
   setNow(day(0));
   await db.upsertListing({ hubspot_deal_id: 'h1', listing_code: 'LH-2026', name: 'Lighthouse Resort', city: 'Isleton, CA', ca_link: 'https://example.com/ca' });
 });
@@ -224,4 +224,55 @@ test('Pierce, Nov 2: texts while they are talking; once quiet past day 7, email 
 
   setNow(day(3, 0.1)); await tick();
   assert.equal(toBuyer().length, 2, 'quiet again: day-1 follow-up is a text, part of the active conversation');
+});
+
+test('Pierce, Nov 2: only his two mailboxes, never Dylan\'s or anyone else\'s; nothing is ever deleted', async () => {
+  const { assertGraphAllowed } = await import('../src/email.js');
+  const { assertHubspotAllowed } = await import('../src/hubspot.js');
+  const { assertDropboxAllowed } = await import('../src/dropbox.js');
+  assert.doesNotThrow(() => assertGraphAllowed('GET', '/users/pbrazil%40cribrokerage.com/mailFolders/inbox/messages'));
+  assert.doesNotThrow(() => assertGraphAllowed('POST', '/users/pbrazil@cricommercial.com/sendMail'));
+  for (const other of ['dylanb@cricommercial.com', 'duane@cricommercial.com', 'anyone@cribrokerage.com']) assert.throws(() => assertGraphAllowed('GET', `/users/${encodeURIComponent(other)}/messages`), /not one of Pierce's/, other);
+  assert.throws(() => assertGraphAllowed('DELETE', '/users/pbrazil@cribrokerage.com/messages/abc'), /never deletes/);
+  assert.throws(() => assertGraphAllowed('POST', '/users/pbrazil@cribrokerage.com/messages/abc/move'), /never deletes or moves/);
+  assert.throws(() => assertGraphAllowed('POST', '/users/pbrazil@cribrokerage.com/messages/abc/permanentDelete'), /never deletes/);
+  assert.throws(() => assertHubspotAllowed('DELETE', '/crm/v3/objects/contacts/1'), /never deletes/);
+  assert.throws(() => assertHubspotAllowed('POST', '/crm/v3/objects/contacts/merge'), /never deletes/);
+  assert.doesNotThrow(() => assertHubspotAllowed('PATCH', '/crm/v3/objects/deals/1'));
+  for (const ep of ['files/delete_v2', 'files/permanently_delete', 'files/move_v2', 'sharing/revoke_shared_link']) assert.throws(() => assertDropboxAllowed(ep), /never deletes/, ep);
+  assert.doesNotThrow(() => assertDropboxAllowed('sharing/create_shared_link_with_settings'));
+  assert.deepEqual(config.email.readMailboxes, ['pbrazil@cribrokerage.com', 'pbrazil@cricommercial.com']);
+  assert.deepEqual(config.email.alwaysCc, ['DylanB@cricommercial.com'], 'Dylan is cc\'d, never read');
+});
+
+test('Dylan\'s listing leads: a forwarded platform email from Dylan becomes a lead; other mail from him does not', async () => {
+  mockInbox.push(
+    { id: 'fw1', receivedDateTime: day(0, -0.1), from: { emailAddress: { address: 'DylanB@cricommercial.com' } }, subject: 'FW: New lead on Smith River RV Park', body: { contentType: 'text', content: '---------- Forwarded message ---------\nFrom: Crexi <notifications@crexi.com>\nName: Sam Buyer\nPhone: 540-555-0111\nProperty: Smith River RV Park\nMessage: still available?' } },
+    { id: 'dy2', receivedDateTime: day(0, -0.05), from: { emailAddress: { address: 'DylanB@cricommercial.com' } }, subject: 'lunch? also saw a crexi listing', body: { contentType: 'text', content: 'Name: Not Lead\nPhone: 540-555-0999' } },
+  );
+  const r = await inboxTick();
+  assert.equal(r.leads, 1);
+  assert.ok(await db.findLeadByPhone('+15405550111'));
+  assert.equal(await db.findLeadByPhone('+15405550999'), null);
+});
+
+test('only Pierce\'s and Dylan\'s listings come in from HubSpot; a lead matching none of them waits for Pierce', async () => {
+  const { listingStatusFor } = await import('../src/hubspot.js');
+  assert.deepEqual(config.hubspot.listingOwners, ['2145826500', '683980338']);
+  assert.equal(listingStatusFor({ dealstage: config.hubspot.sellerStages.listed }), 'active');
+  await ingestEmail({ From: 'notifications@crexi.com', Subject: 'New lead', TextBody: 'Name: Gail Buyer\nPhone: 706-555-0100\nProperty: Pinederosa Park\nMessage: info?' }); // Nolan's listing
+  assert.equal(mockOutbox.filter((m) => m.to === '+17065550100').length, 0, 'not contacted automatically');
+  const a = (await db.listPendingApprovals()).find((x) => x.policy === 'first_touch.unmatched');
+  assert.ok(a, 'Pierce decides');
+});
+
+test('HubSpot listing import asks only for Pierce\'s and Dylan\'s deals', async () => {
+  const { syncListingsFromHubSpot } = await import('../src/hubspot.js');
+  await syncListingsFromHubSpot();
+  const q = hs.searches.find((x) => x.path === '/crm/v3/objects/deals/search' && x.body.properties?.includes('hubspot_owner_id'));
+  assert.ok(q, 'listing search sent');
+  for (const g of q.body.filterGroups) {
+    const f = g.filters.find((x) => x.propertyName === 'hubspot_owner_id');
+    assert.deepEqual(f, { propertyName: 'hubspot_owner_id', operator: 'IN', values: ['2145826500', '683980338'] });
+  }
 });
