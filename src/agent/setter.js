@@ -48,8 +48,12 @@ function emailDetails(listing, links = []) {
     flyer ? linkLine('Flyer', flyer) : '',
     ...links.filter((l) => !(flyer && /flyer/i.test(l.label))).map((l) => linkLine(l.label, l.url)),
     listing.ca_link ? templates.email_details_ca.replace('{ca_link}', listing.ca_link) : '',
+    // Crexi's DD vault asks the buyer to sign the CA before it opens (Pierce, Nov 2 2026), so it can go in the first
+    // email. Only a crexi.com link: a Dropbox data room link is CA-verified-only and never goes here.
+    ddVault(listing) ? linkLine('Due diligence vault', ddVault(listing)) : '',
   ].join('');
 }
+const ddVault = (listing) => { const u = listing?.facts?.dd_vault_url; return /^https:\/\/(www\.)?crexi\.com\//i.test(u || '') ? u : null; };
 
 const docLabel = (filename) => String(filename).replace(/\.[a-z0-9]+$/i, '').replace(/^\d{4}-\d{2}-\d{2}\s*[–-]\s*/, '').trim();
 /** View-only links to the listing's PUBLIC documents (flyer/teaser/brochure) for the first email. Team-only links are skipped. */

@@ -122,3 +122,20 @@ test('rate limit (Pierce, Nov 2): a buyer who keeps writing keeps getting answer
   assert.match(held.approval?.reason || '', /rate limit/);
   assert.equal(sentToBuyer().length, 10);
 });
+
+test('intro email: Crexi DD vault link goes in (Crexi gates it with the CA); a Dropbox folder link never does', async () => {
+  const { sendIntroEmail } = await import('../src/agent/setter.js');
+  const { mockMailbox } = await import('../src/email.js');
+  mockMailbox.length = 0;
+  await db.updateListing(hacienda.id, { crexi_url: 'https://www.crexi.com/properties/1/x', facts: { ...hacienda.facts, dd_vault_url: 'https://www.crexi.com/properties/1/x?openDueDiligence=open' } });
+  const lead = await buyer({ email: 'jane@example.com' });
+  await sendIntroEmail(lead, await db.getListing(hacienda.id));
+  const m = mockMailbox.at(-1);
+  assert.ok(m, 'intro email went out');
+  assert.match(m.text, /Due diligence vault: https:\/\/www\.crexi\.com\/properties\/1\/x\?openDueDiligence=open/);
+  assert.ok(!m.text.includes('dropbox.com/scl/fo'), 'the Dropbox data room link is never in the first email');
+  // a non-Crexi dd_vault_url (e.g. someone pastes a Dropbox folder there) is ignored
+  await db.updateListing(hacienda.id, { facts: { ...hacienda.facts, dd_vault_url: ROOM_URL } });
+  await sendIntroEmail(await db.getLead(lead.id), await db.getListing(hacienda.id));
+  assert.ok(!mockMailbox.at(-1).text.includes('Due diligence vault'));
+});
