@@ -100,3 +100,25 @@ test('doc sync: an insurance file or seller emails in the data room block its li
   assert.equal(dataRoomFor(await db.getListing(hacienda.id)), ROOM_URL);
   assert.ok(ownerLog.some((t) => /Data room for .+ is clear again/.test(t)), ownerLog.join('\n'));
 });
+
+test('rate limit (Pierce, Nov 2): a buyer who keeps writing keeps getting answers; unanswered messages are capped; a held reply goes to Pierce', async () => {
+  const lead = await buyer({ ca_verified: false });
+  const at = (min) => new Date(+new Date('2026-11-03T18:00:00Z') + min * 60e3).toISOString();
+  // 8 back-and-forths in one day: every reply goes out
+  for (let i = 0; i < 8; i++) {
+    setNow(at(i * 10));
+    await db.updateLead(lead.id, { last_inbound_at: at(i * 10) });
+    const r = await deliver(await db.getLead(lead.id), `Answer ${i}`, { kind: 'reply' });
+    assert.ok(r.sent || r.id || !r.approval, `reply ${i}: ${JSON.stringify(r)}`);
+  }
+  assert.equal(sentToBuyer().length, 8);
+  // buyer goes quiet: after 3 unanswered, a follow-up is skipped and a reply becomes a draft for Pierce
+  setNow(at(100)); await deliver(await db.getLead(lead.id), 'Extra 1', { kind: 'reply' });
+  setNow(at(110)); await deliver(await db.getLead(lead.id), 'Extra 2', { kind: 'reply' });
+  setNow(at(120));
+  const f = await deliver(await db.getLead(lead.id), 'Checking in', { kind: 'followup' });
+  assert.equal(f.skipped, 'rate_limit');
+  const held = await deliver(await db.getLead(lead.id), 'One more', { kind: 'reply' });
+  assert.match(held.approval?.reason || '', /rate limit/);
+  assert.equal(sentToBuyer().length, 10);
+});

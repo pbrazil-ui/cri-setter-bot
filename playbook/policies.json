@@ -83,7 +83,9 @@
     }
   },
   "limits": {
-    "max_msgs_per_lead_per_day": 6,
+    "max_msgs_per_lead_per_day": 20,
+    "max_unanswered_msgs": 3,
+    "_rate_limits": "Pierce, Nov 2 2026: answer every buyer message. Caps are runaway guards: 3 messages the buyer hasn't answered (in 24h), 20 a day in total. A held reply becomes a Y# draft for Pierce.",
     "max_auto_sends_per_hour": 40,
     "max_pending_approvals": 8,
     "approval_expires_hours": 48

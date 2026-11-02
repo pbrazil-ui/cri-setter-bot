@@ -167,11 +167,24 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
   if (!lead.phone && !lead.email) return { skipped: 'no_contact' };
   if (email ? !lead.email : !lead.phone) return { skipped: 'no_contact' };
 
-  const sentToday = await db.countOutboundSince(lead.id, new Date(+now() - 864e5).toISOString());
-  if (sentToday >= (limits().max_msgs_per_lead_per_day ?? config.maxMsgsPerLeadPerDay)) {
-    await notifyOwner(`Rate limit hit for ${leadLabel(lead)} (${sentToday} msgs/24h). Bot held its reply.`);
-    await audit('rate_limited', { leadId: lead.id, detail: { kind } });
-    return { skipped: 'rate_limit' };
+  // Runaway guard, not a conversation cap (Pierce, Nov 2 2026: "we need to respond to text and email effectively").
+  // A buyer who keeps writing keeps getting answers; what's capped is messages they haven't answered, plus a high daily
+  // ceiling. A held REPLY goes to Pierce as a Y# draft instead of being dropped.
+  const dayAgo = new Date(+now() - 864e5).toISOString();
+  const sentToday = await db.countOutboundSince(lead.id, dayAgo);
+  const lastIn = lead.last_inbound_at && lead.last_inbound_at > dayAgo ? lead.last_inbound_at : dayAgo;
+  const unanswered = await db.countOutboundSince(lead.id, lastIn);
+  const dayCap = limits().max_msgs_per_lead_per_day ?? config.maxMsgsPerLeadPerDay;
+  const unansweredCap = limits().max_unanswered_msgs ?? 3;
+  if (sentToday >= dayCap || unanswered >= unansweredCap) {
+    const why = sentToday >= dayCap ? `${sentToday} msgs in 24h` : `${unanswered} msgs since they last wrote`;
+    await audit('rate_limited', { leadId: lead.id, detail: { kind, sentToday, unanswered } });
+    if (!['reply', 'answer'].includes(kind)) {
+      await notifyOwner(`Rate limit for ${leadLabel(lead)} (${why}). Bot skipped a ${kind} message.`);
+      return { skipped: 'rate_limit' };
+    }
+    forceApproval = true;
+    reason = `rate limit (${why})`;
   }
 
   // The bot can't call: a draft claiming Pierce called / left a voicemail never goes out on its own.

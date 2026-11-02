@@ -161,7 +161,7 @@ export const config = {
   nurture: { everyDays: num(env.NURTURE_EVERY_DAYS, 14), untilDay: num(env.NURTURE_UNTIL_DAY, 91), monthlyDays: num(env.NURTURE_MONTHLY_DAYS, 30), sms: bool(env.NURTURE_SMS, false) },
   // HubSpot call tasks for Pierce: hot = due now and he gets a text; otherwise due next business day at this hour
   callTaskHour: num(env.CALL_TASK_HOUR, 9),
-  maxMsgsPerLeadPerDay: num(env.MAX_MSGS_PER_LEAD_PER_DAY, 6),
+  maxMsgsPerLeadPerDay: num(env.MAX_MSGS_PER_LEAD_PER_DAY, 20),
   tickSeconds: num(env.TICK_SECONDS, 300),
 };
 
