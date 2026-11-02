@@ -39,7 +39,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - `src/db/` `supabase.js` (prod) / `memory.js` (tests), same interface · `supabase/schema.sql`
 
 ## Commands
-- `npm install && npm test` (59 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
+- `npm install && npm test` (60 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
 - `npm run dev` local server, all mocks, :3000
 - `open "$PUBLIC_URL/admin/selftest?key=$INGEST_SECRET"` after any deploy or key change: every check should be ok
 - `curl -X POST "$PUBLIC_URL/admin/sync-docs?key=$INGEST_SECRET"` force a Dropbox sync
@@ -63,7 +63,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 10. Uploaded CSV lists are not auto-sent (TCPA). Fresh inquiries are.
 11. Human pacing (Pierce: "vary the timing in seconds and minutes"): replies 45s–5min random (`REPLY_DELAY_*`), bursts collapse into one answer, A# answers 40s–3min (`PACE_*`), never two texts to one buyer <45s apart (`MIN_GAP_SEC`). First contact: email 1–2 min after the inquiry (`FIRST_TOUCH_DELAY_*`), text 4–6 min after the email (`TEXT_AFTER_EMAIL_*`). Don't "optimize" this away.
 14. The bot can't call. Calls become HubSpot tasks for Pierce (`callTask`, deduped per lead): no reply after the first touch (next business morning), they ask for a call / tour / 1031 / escalation (due now + a text to Pierce). `claimsContact()` holds any message saying Pierce called or left a voicemail. Every deal's `hs_next_step` is kept current (`syncNextStep`); verified buyers get a structured note (property, buy box, capital, timeline, next step).
-15. Follow-up (elite-cre-sales): days 1/3/7 alternating text and email, then `nurture` status: email every 14 days to day 91, then monthly. Long-tail texts off unless `NURTURE_SMS=true`. Email is SENT, not drafted (`EMAIL_SEND_MODE=send`, Pierce Nov 2 2026); buyer email replies are read from the inbox and answered in-thread, unless Pierce already replied in that conversation.
+15. Follow-up (elite-cre-sales): days 1/3/7 alternating text and email, then `nurture` status: email every 14 days to day 91, then monthly. Long-tail texts off unless `NURTURE_SMS=true` (Pierce confirmed Nov 2 2026: "email only after this"; texts are for active conversations and the day 1/3/7 touches, and a nurture lead who replies is back in conversation on their channel with the cadence restarted). Email is SENT, not drafted (`EMAIL_SEND_MODE=send`, Pierce Nov 2 2026); buyer email replies are read from the inbox and answered in-thread, unless Pierce already replied in that conversation.
 13. Listings under contract or sold: no documents/numbers/past correspondence (tools.js), first contact says so and asks criteria, Pierce gets a MATCH text. Seller names never reach buyers: `publicListingName()` strips "Seller Name - " from HubSpot deal names; buyer-facing text uses the platform's property name first.
 12. One Railway replica. Tests never hit real services. Add a test for every behavior change.
 

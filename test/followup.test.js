@@ -206,3 +206,22 @@ test('Pierce\'s skills are in every prompt, with the no-calls rule on top', () =
   assert.match(config.email.signatureHtml, /DRE #02247759/);
   assert.equal(config.email.sendMode, 'send');
 });
+
+test('Pierce, Nov 2: texts while they are talking; once quiet past day 7, email only; if they text back, the conversation resumes by text', async () => {
+  assert.equal(config.nurture.sms, false, 'long-term touches are email only by default');
+  const lead = await db.insertLead({ phone: BUYER, email: 'jane@example.com', first_name: 'Jane', source: 'listing_email', status: 'nurture', listing_id: 1,
+    property_name: 'Lighthouse Resort', created_at: day(-20), last_outbound_at: day(-13), followup_count: 3 });
+  setNow(day(1, 0.1)); await tick();
+  assert.equal(toBuyer().length, 0, 'nurture touch did not text');
+  assert.equal(mockMailbox.length, 1, 'nurture touch went by email');
+
+  setNow(day(2)); await sms(BUYER, 'actually yes, still looking. what is occupancy?');
+  await replyTick();
+  assert.equal(toBuyer().length, 1, 'they texted, so the bot answers by text');
+  const back = await db.getLead(lead.id);
+  assert.equal(back.status, 'engaged');
+  assert.equal(back.followup_count, 0, 'cadence restarts');
+
+  setNow(day(3, 0.1)); await tick();
+  assert.equal(toBuyer().length, 2, 'quiet again: day-1 follow-up is a text, part of the active conversation');
+});
