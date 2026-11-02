@@ -74,6 +74,7 @@ ${otherListings.length ? `# OTHER ACTIVE LISTINGS (public names; safe to mention
 - source: ${lead.source}; platform: ${lead.platform || 'unknown'}; property asked about: ${lead.property_name || 'unknown'}
 - original inquiry: ${lead.inquiry || 'n/a'}
 - channel: ${lead.preferred_channel || 'sms'}
+- email on file: ${lead.email || 'none (ask for it so the OM and info can go out by email)'}; intro email with the NDA/OM links: ${lead.raw?.intro_email || (lead.first_email_at ? 'sent' : 'not sent yet')}. Never say it was sent unless it says sent.
 - qualification so far: ${JSON.stringify(lead.qualification || {})}
 - status: ${lead.status}
 

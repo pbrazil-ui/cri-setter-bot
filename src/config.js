@@ -135,6 +135,9 @@ export const config = {
   leadPlatforms: list(env.LEAD_PLATFORMS, ['crexi', 'loopnet', 'rvparkstore', 'mhvillage', 'mhbay', 'costar', 'biproxi', 'website']),
 
   firstTouchPerTick: num(env.FIRST_TOUCH_PER_TICK, 10),
+  // numbers that text platform lead alerts to the RingCentral number (Crexi, seen Nov 1 2026). An alert-shaped text
+  // from any other number is NOT acted on (otherwise anyone could make the bot text a stranger); Pierce is told.
+  platformAlertNumbers: list(env.PLATFORM_ALERT_NUMBERS, ['+14243223884']),
   maxPendingApprovals: num(env.MAX_PENDING_APPROVALS, 5),
   followupDays: list(env.FOLLOWUP_DAYS, ['1', '3', '7']).map(Number),
   // after day 7 (elite-cre-sales skill): every 2 weeks until day 91, then monthly, until they buy, say no or opt out.

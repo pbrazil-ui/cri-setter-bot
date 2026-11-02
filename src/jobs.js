@@ -112,28 +112,53 @@ export async function expireTick() {
 }
 
 // ---------- one instance runs the loops (Render overlaps old and new instances during every deploy) ----------
-const HOLDER = `${process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || 'local'}:${process.pid}:${Math.random().toString(36).slice(2, 8)}`;
+// Observed on Render (Nov 2 2026): the old instance keeps running ~2 minutes after the new one is live and never
+// receives a usable SIGTERM. So the NEWEST booted instance wins: it announces itself in settings.job_newest and
+// heartbeats it; an older leader that sees a newer, live instance releases the lease within one 15s renew. If the
+// newer one dies (heartbeat older than 60s), the older one resumes.
 const LEASE_TTL_SEC = 60;
-let leader = false; let leaseWarned = false; let stopping = false;
+const NEWER_ALIVE_MS = 60e3;
 
-/** Claim or renew the job lease. Without the DB function (schema.sql not re-run) it falls back to running, loudly. */
-export async function renewLease() {
-  if (stopping) return (leader = false);
-  try {
-    const got = await db.claimLease(HOLDER, LEASE_TTL_SEC);
-    if (got && !leader) console.log(`[lease] ${HOLDER} is running the job loops`);
-    if (!got && leader) console.log('[lease] another instance took over the job loops');
-    leader = got;
-  } catch (e) {
-    if (e.missingFunction) {
-      if (!leaseWarned) { console.warn('[lease] claim_job_lease() missing: re-run supabase/schema.sql. Running loops without a lease (overlapping deploys could double-send).'); leaseWarned = true; }
-      leader = true;
-    } else console.error('[lease]', e.message); // transient: keep the current state
+export function makeLeaseKeeper({ holder, bootedAt }) {
+  let leader = false; let stopping = false; let warned = false;
+  const onLead = [];
+  async function renew() {
+    if (stopping) return (leader = false);
+    try {
+      const t = +now();
+      const newest = await db.getSetting('job_newest');
+      const newerAlive = newest && newest.holder !== holder && newest.booted_at > bootedAt && t - +new Date(newest.seen) < NEWER_ALIVE_MS;
+      if (newerAlive) {
+        if (leader) { await db.releaseLease(holder); leader = false; console.log(`[lease] newer instance ${newest.holder} is taking over the job loops`); }
+        return false;
+      }
+      await db.setSetting('job_newest', { holder, booted_at: bootedAt, seen: new Date(t).toISOString() });
+      const got = await db.claimLease(holder, LEASE_TTL_SEC);
+      if (got && !leader) { console.log(`[lease] ${holder} is running the job loops`); onLead.forEach((fn) => fn()); }
+      if (!got && leader) console.log('[lease] another instance took over the job loops');
+      leader = got;
+    } catch (e) {
+      if (e.missingFunction) {
+        if (!warned) { console.warn('[lease] claim_job_lease() missing: re-run supabase/schema.sql. Running loops without a lease.'); warned = true; }
+        if (!leader) onLead.forEach((fn) => fn());
+        leader = true;
+      } else console.error('[lease]', e.message); // transient: keep the current state
+    }
+    return leader;
   }
-  return leader;
+  return {
+    renew, isLeader: () => leader && !stopping, onBecomeLeader: (fn) => onLead.push(fn),
+    async stop() { stopping = true; leader = false; try { await db.releaseLease(holder); } catch { /* expires on its own */ } },
+  };
 }
-export const isLeader = () => leader;
-const onlyLeader = (fn) => async () => (leader && !stopping ? fn() : null);
+
+const keeper = makeLeaseKeeper({
+  holder: `${process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || 'local'}:${process.pid}:${Math.random().toString(36).slice(2, 8)}`,
+  bootedAt: new Date().toISOString(),
+});
+export const renewLease = () => keeper.renew();
+export const isLeader = () => keeper.isLeader();
+const onlyLeader = (fn) => async () => (keeper.isLeader() ? fn() : null);
 
 export function startJobs() {
   const timers = [];
@@ -141,11 +166,11 @@ export function startJobs() {
   const once = (fn, ms) => timers.push(setTimeout(onlyLeader(fn), ms));
   const history = () => importEmailHistory().then((r) => r && console.log('[email history]', JSON.stringify(r))).catch((e) => console.error('[email history]', e.message));
 
+  // when this instance takes the lease (at boot, or later after the old one hands over): register the RingCentral
+  // webhook for THIS config and refresh listings
+  keeper.onBecomeLeader(() => { renewSubscription(); syncListings(); });
   timers.push(setInterval(renewLease, 15 * 1000));
-  renewLease().then(() => {
-    once(renewSubscription, 0);
-    once(syncListings, 0);
-  });
+  renewLease();
   every(briefTick, 60 * 1000);
   every(history, 6 * 3600 * 1000);
   once(history, 120 * 1000);
@@ -161,12 +186,13 @@ export function startJobs() {
   every(syncListings, 3600 * 1000);
   once(tick, 5000);
 
-  // Render sends SIGTERM to the old instance once the new one is healthy: stop the loops and hand over the lease.
+  // If a SIGTERM does arrive, stop the loops and hand over the lease at once.
+  let shuttingDown = false;
   const shutdown = async (sig) => {
-    if (stopping) return;
-    stopping = true; leader = false;
+    if (shuttingDown) return;
+    shuttingDown = true;
     timers.forEach((t) => { clearInterval(t); clearTimeout(t); });
-    try { await db.releaseLease(HOLDER); } catch { /* lease expires on its own in 60s */ }
+    await keeper.stop();
     console.log(`[shutdown] ${sig}: loops stopped, lease released`);
     setTimeout(() => process.exit(0), 500).unref();
   };

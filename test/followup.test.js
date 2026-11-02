@@ -377,3 +377,81 @@ test('lead emails are read from every folder (Superhuman "Done" / Outlook rules 
     assert.ok(!urls.some((p) => p.includes('/mailFolders/inbox/messages')));
   } finally { globalThis.fetch = realFetch; Object.assign(config.email, saved); }
 });
+
+const CREXI_ALERT = (name, phone) => `🏢 A potential buyer on www.CREXi.com is interested in Mobile Hacienda Park in Unincorporated ------------------------ NAME: ${name} PHONE: ${phone} ROLE: Principal Investor, Buyer Rep, Listing Rep, Landlord Rep ACTION: Broker Phone Clicked https://www.crexi.com/property/2467488/dashboard/leads?type=loadPhoneClicked&userId=2257280`;
+
+test('Crexi lead alert texted to the RingCentral number: parsed exactly (real Nov 1 2026 alert)', async () => {
+  const { parsePlatformAlert } = await import('../src/intake/sms-alert.js');
+  const a = parsePlatformAlert(CREXI_ALERT('Pierce Brazil', '(949) 335-5921'));
+  assert.equal(a.platform, 'crexi');
+  assert.equal(a.property_name, 'Mobile Hacienda Park');
+  assert.equal(a.city, 'Unincorporated');
+  assert.equal(a.first_name, 'Pierce'); assert.equal(a.last_name, 'Brazil');
+  assert.equal(a.phone, '(949) 335-5921');
+  assert.equal(a.email, null);
+  assert.equal(a.action, 'Broker Phone Clicked');
+  assert.equal(a.role, 'Principal Investor, Buyer Rep, Listing Rep, Landlord Rep');
+  assert.equal(a.crexi_url, 'https://www.crexi.com/properties/2467488');
+  assert.equal(parsePlatformAlert('hey is lighthouse still available?'), null, 'a buyer text is not an alert');
+});
+
+test('Crexi alert: the buyer gets the first text asking for their email; the alert number never gets a reply', async () => {
+  await db.upsertListing({ hubspot_deal_id: 'h9', name: 'Boon Chan - Hacienda Mobile Park', ca_link: 'https://example.com/ca-hacienda' });
+  const CREXI_NUMBER = '+14243223884';
+  setNow(day(0, 0)); // Tue 10am PT, inside the send window
+  await sms(CREXI_NUMBER, CREXI_ALERT('Sam Buyer', '(530) 555-0166'));
+  assert.equal(mockOutbox.filter((m) => m.to === CREXI_NUMBER).length, 0, 'never reply to the platform');
+  const t = mockOutbox.filter((m) => m.to === '+15305550166');
+  assert.equal(t.length, 1);
+  assert.equal(t[0].text, "Hey Sam, this is Pierce over at CRI Brokerage! Saw your inquiry on Mobile Hacienda Park on Crexi. You can sign the NDA here to unlock the OM: https://example.com/ca-hacienda What's the best email to send over the OM and info?");
+  assert.ok(!/Boon|Chan/.test(t[0].text), 'seller name never shown');
+  const lead = await db.findLeadByPhone('+15305550166');
+  assert.equal(lead.platform, 'crexi');
+  assert.match(lead.inquiry, /Broker Phone Clicked/);
+  assert.equal(await db.findLeadByPhone(CREXI_NUMBER), null, 'the alert sender is not a lead');
+});
+
+test('Crexi alert listing Pierce\'s own numbers: nobody is texted, Pierce is told', async () => {
+  await sms('+14243223884', CREXI_ALERT('Pierce Brazil', config.owner.phone)); // his cell (OWNER_PHONE); same for the RC number
+  assert.equal(mockOutbox.filter((m) => m.to !== config.owner.phone).length, 0);
+  assert.ok(ownerLog.some((x) => /lists YOUR number/.test(x)));
+});
+
+test('TEST mode: Pierce\'s cell plays the Mobile Hacienda buyer; his reply is a buyer reply; # still means a command', async () => {
+  await db.upsertListing({ hubspot_deal_id: 'h9', name: 'Boon Chan - Hacienda Mobile Park' });
+  setNow('2026-11-02T02:40:00Z'); // Sunday 6:40pm PT: outside the Mon-Sat send window, a test still goes
+  const PIERCE_CELL = config.owner.phone;
+  await sms(PIERCE_CELL, 'TEST Mobile Hacienda');
+  const toCell = () => mockOutbox.filter((m) => m.to === PIERCE_CELL).map((m) => m.text);
+  assert.ok(toCell().some((t) => /^Hey Pierce, this is Pierce over at CRI Brokerage! Saw your inquiry on Hacienda Mobile Park on Crexi\..*What's the best email to send over the OM and info\?$/.test(t)), toCell().join('\n'));
+  const lead = await db.findLeadByPhone(PIERCE_CELL);
+  assert.equal(lead.raw.test, true);
+  assert.equal(hs.deals && Object.keys(hs.deals).length, 0, 'test leads never touch HubSpot');
+
+  await sms(PIERCE_CELL, 'pbrazil.test@gmail.com is best');
+  await replyTick();
+  const after = await db.getLead(lead.id);
+  assert.equal(after.email, 'pbrazil.test@gmail.com', 'email captured from the text');
+  assert.equal(mockMailbox.at(-1).to, 'pbrazil.test@gmail.com', 'intro email with the OM/NDA links goes out');
+  assert.deepEqual(mockMailbox.at(-1).cc, ['DylanB@cricommercial.com']);
+
+  await sms(PIERCE_CELL, '#STATUS');
+  assert.ok(ownerLog.some((x) => /^Leads:/.test(x)), '# routes to commands during a test');
+  await sms(PIERCE_CELL, '#ENDTEST');
+  assert.equal((await db.getLead(lead.id)).status, 'human', 'test lead muted: no follow-ups to his cell');
+  await sms(PIERCE_CELL, 'STATUS');
+  assert.equal(ownerLog.filter((x) => /^Leads:/.test(x)).length, 2, 'commands work without # again');
+});
+
+test('deploy handover: the newest instance takes the job loops from the old one within one renew', async () => {
+  const { makeLeaseKeeper } = await import('../src/jobs.js');
+  const old = makeLeaseKeeper({ holder: 'old', bootedAt: '2026-11-03T17:00:00.000Z' });
+  assert.equal(await old.renew(), true);
+  const fresh = makeLeaseKeeper({ holder: 'new', bootedAt: '2026-11-03T18:00:00.000Z' });
+  assert.equal(await fresh.renew(), false, 'old still holds the lease this instant');
+  assert.equal(await old.renew(), false, 'old sees a newer live instance and steps down');
+  assert.equal(await fresh.renew(), true, 'new takes over on its next renew');
+  assert.equal(old.isLeader(), false);
+  setNow(day(0, 0.05)); // the new one stops heartbeating (crashed): after 60s the old one resumes
+  assert.equal(await old.renew(), true);
+});

@@ -35,6 +35,12 @@ async function scopeAlert(e) {
   scopeAlerted.add(obj);
   await notifyOwner(`HubSpot refused the bot's ${obj} request (${e.status}). The "CRI Setter Bot" service key is missing a scope for ${obj}${obj === 'notes' || obj === 'tasks' ? ` (look for crm.objects.${obj}.write in the key's scope list)` : ''}. Leads still get answered; HubSpot logging for ${obj} is paused until it's added.`);
 }
+// Test leads (Pierce's own cell playing a buyer, owner TEST command) never touch HubSpot.
+const skipTest = (fn) => async (x, ...rest) => {
+  const lead = x && typeof x === 'object' ? x : await db.getLead(x);
+  if (lead?.raw?.test) return null;
+  return fn(x, ...rest);
+};
 const safe = (fn) => async (...args) => {
   if (!enabled()) return null;
   try { return await fn(...args); } catch (e) { console.error('[hubspot]', e.message); await scopeAlert(e); return null; }
@@ -53,7 +59,7 @@ const dealIdFor = async (lead) => {
  * A HubSpot task for Pierce (the bot can't call). Deduped per lead by `key`. Returns the task id, or null if HubSpot
  * is off or the call failed (the caller then texts Pierce instead, so the reminder is never lost).
  */
-export const createTask = safe(async (leadId, { key, subject, body, dueAt, type = 'CALL', priority = 'HIGH' }) => {
+export const createTask = safe(skipTest(async (leadId, { key, subject, body, dueAt, type = 'CALL', priority = 'HIGH' }) => {
   const lead = await db.getLead(leadId);
   if (lead.hubspot_tasks?.[key]) return lead.hubspot_tasks[key];
   const contactId = lead.hubspot_contact_id || (await upsertContact(lead));
@@ -73,16 +79,16 @@ export const createTask = safe(async (leadId, { key, subject, body, dueAt, type 
   await db.updateLead(leadId, { hubspot_tasks: { ...(lead.hubspot_tasks || {}), [key]: t.id } });
   hubspotLog.push({ op: 'task', leadId, key, subject });
   return t.id;
-});
+}));
 
 /** The deal's "Next step" field: every lead always shows what happens next and when. */
-export const setNextStep = safe(async (leadId, text) => {
+export const setNextStep = safe(skipTest(async (leadId, text) => {
   const lead = await db.getLead(leadId);
   const dealId = lead && (await dealIdFor(lead));
   if (dealId) await api('PATCH', `/crm/v3/objects/deals/${dealId}`, { properties: { hs_next_step: text.slice(0, 250) } });
   hubspotLog.push({ op: 'next_step', leadId, text });
   return true;
-});
+}));
 
 /** Read-only: token works for contacts and deals, and both pipelines are reachable. */
 /**
@@ -141,7 +147,7 @@ export function decideStageMove(currentStage, status) {
 }
 
 // ---------- contacts ----------
-export const upsertContact = safe(async (lead) => {
+export const upsertContact = safe(skipTest(async (lead) => {
   if (lead.hubspot_contact_id) return lead.hubspot_contact_id;
   const filters = [];
   if (lead.email) filters.push({ filters: [{ propertyName: 'email', operator: 'EQ', value: lead.email }] });
@@ -165,12 +171,12 @@ export const upsertContact = safe(async (lead) => {
   await db.updateLead(lead.id, { hubspot_contact_id: id });
   hubspotLog.push({ op: 'contact', leadId: lead.id, id });
   return id;
-});
+}));
 
 // ---------- buyer deals ----------
 const dealKey = (lead, listing) => listing?.listing_code || listing?.hubspot_deal_id || lead.property_name || 'general';
 
-export const ensureBuyerDeal = safe(async (lead, listing) => {
+export const ensureBuyerDeal = safe(skipTest(async (lead, listing) => {
   if (!hs.createDeals) return null;
   const key = dealKey(lead, listing);
   const existing = lead.hubspot_deals?.[key];
@@ -207,10 +213,10 @@ export const ensureBuyerDeal = safe(async (lead, listing) => {
   const fresh = await db.getLead(lead.id);
   await db.updateLead(lead.id, { hubspot_deals: { ...(fresh.hubspot_deals || {}), [key]: dealId } });
   return dealId;
-});
+}));
 
 /** Call after any lead status change. Moves the buyer deal per decideStageMove. */
-export const syncDealStage = safe(async (leadId) => {
+export const syncDealStage = safe(skipTest(async (leadId) => {
   const lead = await db.getLead(leadId);
   if (!lead) return null;
   const listing = lead.listing_id ? await db.getListing(lead.listing_id) : null;
@@ -224,10 +230,10 @@ export const syncDealStage = safe(async (leadId) => {
   await api('PATCH', `/crm/v3/objects/deals/${dealId}`, { properties });
   hubspotLog.push({ op: 'deal_stage', leadId, dealId, ...properties });
   return properties;
-});
+}));
 
 /** Timeline note on the contact (and the deal if one exists). */
-export const addNote = safe(async (leadId, body) => {
+export const addNote = safe(skipTest(async (leadId, body) => {
   const lead = await db.getLead(leadId);
   const contactId = lead?.hubspot_contact_id || (await upsertContact(lead));
   if (!contactId) return null;
@@ -238,7 +244,7 @@ export const addNote = safe(async (leadId, body) => {
   await api('POST', '/crm/v3/objects/notes', { properties: { hs_timestamp: now().toISOString(), hs_note_body: `[Setter bot] ${body}` }, associations });
   hubspotLog.push({ op: 'note', leadId, body });
   return true;
-});
+}));
 
 /**
  * Bot status for a Sellers-pipeline deal. listing_status wins when set; otherwise the stage decides

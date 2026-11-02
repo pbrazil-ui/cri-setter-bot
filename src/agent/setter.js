@@ -21,6 +21,8 @@ const iso = () => now().toISOString();
 /** Random whole seconds in [minSec, maxSec]: varied, never on a fixed beat. */
 export const randSec = ({ minSec, maxSec }) => (maxSec <= 0 ? 0 : Math.round(minSec + Math.random() * Math.max(0, maxSec - minSec)));
 export const isPaused = async () => (await db.getSetting('paused')) === true;
+/** Pierce's own cell playing a buyer (owner TEST command): any hour, no HubSpot, muted when the test ends. */
+export const isTestLead = (lead) => lead?.raw?.test === true;
 
 export async function setStatus(lead, status, extra = {}) {
   const updated = await db.updateLead(lead.id, { status, ...extra });
@@ -193,7 +195,7 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
     return { approval: a };
   }
 
-  if (!email && !inWindow(kind === 'reply' ? config.replyWindow : config.sendWindow)) {
+  if (!email && !isTestLead(lead) && !inWindow(kind === 'reply' ? config.replyWindow : config.sendWindow)) {
     if (kind === 'reply') return scheduleSend(lead, text, kind, onSend);
     return { deferred: 'outside_window' };
   }
@@ -213,6 +215,16 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
 }
 
 // ---------- first touch ----------
+/** The email with the summary, listing page, flyer links and NDA link (first contact, or once a buyer texts their email). */
+export async function sendIntroEmail(lead, listing, { onSend = {} } = {}) {
+  await hubspot.ensureBuyerDeal(lead, listing);
+  const links = await publicDocLinks(listing);
+  const text = firstTouchText(lead, listing, { channel: 'email', links });
+  const r = await deliver(lead, text, { kind: 'first_touch', channel: 'email', onSend });
+  if (r.sent || r.draft) await hubspot.addNote(lead.id, `Intro email ${r.sent ? 'sent' : 'drafted in Outlook'}${links.length ? ` with ${links.map((l) => l.doc).join(', ')}` : ''}.`);
+  return r;
+}
+
 /**
  * Pierce's sequence: 1-2 min after the inquiry, the email (any hour); ~5 min later, the text (send window only).
  * Leads with only one channel get just that one. Called by the fast job loop and right after intake.
@@ -228,12 +240,8 @@ export async function processFirstTouch(lead) {
 
   // step 1: email
   if (emailOn && !lead.first_email_at) {
-    await hubspot.ensureBuyerDeal(lead, listing);
-    const links = await publicDocLinks(listing);
-    const text = firstTouchText(lead, listing, { channel: 'email', links });
-    const r = await deliver(lead, text, { kind: 'first_touch', channel: 'email', onSend: lead.phone ? {} : { status: 'contacted' } });
+    const r = await sendIntroEmail(lead, listing, { onSend: lead.phone ? {} : { status: 'contacted' } });
     if (r.deferred) { await db.updateLead(lead.id, { next_action_at: new Date(+now() + 30 * 60e3).toISOString() }); return { email: r }; }
-    if (r.sent || r.draft) await hubspot.addNote(lead.id, `First email ${r.sent ? 'sent' : 'drafted in Outlook'}${links.length ? ` with ${links.map((l) => l.doc).join(', ')}` : ''}.`);
     if (!lead.phone) {
       if (r.approval) await db.updateLead(lead.id, { status: 'awaiting_approval', first_email_at: iso() });
       else await db.updateLead(lead.id, { first_email_at: iso(), ...(r.sent || r.draft ? { status: 'contacted' } : {}) });
@@ -247,7 +255,7 @@ export async function processFirstTouch(lead) {
 
   // step 2: text
   if (!lead.phone) return { skipped: 'no_phone' };
-  if (!inWindow(config.sendWindow)) {
+  if (!inWindow(config.sendWindow) && !isTestLead(lead)) {
     await db.updateLead(lead.id, { next_action_at: nextWindowStart(config.sendWindow).toISOString() });
     return { deferred: 'outside_window' };
   }
@@ -270,6 +278,7 @@ export async function handleInboundSms(phone, text, rcMessageId) {
   }
   await db.insertMessage({ lead_id: lead.id, direction: 'in', body: text, status: 'received', rc_message_id: rcMessageId || null });
   await audit('received', { leadId: lead.id, detail: { chars: text.length } });
+  lead = await captureEmail(lead, text);
   await db.supersedeApprovalsForLead(lead.id); // drafts written before this reply are stale
   await db.cancelScheduledForLead(lead.id);
   lead = await db.updateLead(lead.id, { last_inbound_at: iso(), followup_count: 0 });
@@ -324,6 +333,27 @@ export async function handleInboundEmail(lead, { id, conversationId, subject, te
   }
   if (['new', 'no_phone', 'awaiting_approval', 'contacted', 'disqualified', 'no_response', 'nurture'].includes(lead.status)) lead = await setStatus(lead, 'engaged');
   return queueReply(lead);
+}
+
+/**
+ * A buyer texting their email (we ask for it when the inquiry had none): save it and send the intro email with the
+ * NDA/OM links (cc Dylan). If email isn't connected yet, Pierce is told to send it by hand. The reply that follows
+ * sees `intro_email` in the prompt, so it never claims an email went out when it didn't.
+ */
+const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
+async function captureEmail(lead, text) {
+  const found = String(text || '').match(EMAIL_RE)?.[0]?.toLowerCase();
+  if (!found || found === lead.email) return lead;
+  lead = await db.updateLead(lead.id, { email: found });
+  await audit('email_captured', { leadId: lead.id, detail: { email: found } });
+  if (lead.first_email_at) return lead;
+  const listing = await getListing(lead);
+  if (config.email.mode === 'off') {
+    await notifyOwner(`${leadLabel(lead)} sent their email (${found}). Email isn't connected yet, so send them the OM and info yourself.`);
+    return db.updateLead(lead.id, { raw: { ...(lead.raw || {}), intro_email: 'pending: email not connected, Pierce sending by hand' } });
+  }
+  const r = await sendIntroEmail(lead, listing);
+  return db.updateLead(lead.id, { first_email_at: iso(), raw: { ...(lead.raw || {}), intro_email: r.sent ? 'sent' : r.draft ? 'drafted' : r.approval ? 'waiting on Pierce' : 'not sent' } });
 }
 
 // ---------- human pacing ----------
@@ -583,7 +613,18 @@ export function followupPlan(lead) {
   return { dueAt: new Date(last + (days[n] - (n > 0 ? days[n - 1] : 0)) * DAY), channel, step };
 }
 
+/** Pierce's TEST session: ends after its time limit; the test lead is muted so his cell gets no follow-ups. */
+export async function expireOwnerTest() {
+  const t = await db.getSetting('owner_test');
+  if (!t || new Date(t.expires_at) > now()) return false;
+  const lead = await db.getLead(t.lead_id);
+  if (lead && !MUTED.has(lead.status)) await db.updateLead(lead.id, { status: 'human' });
+  await db.setSetting('owner_test', null);
+  return true;
+}
+
 export async function runFollowups() {
+  await expireOwnerTest();
   if (!inWindow(config.sendWindow)) return { skipped: 'outside_window' };
   const results = [];
   const others = (await db.listListings()).filter((l) => isAvailable(l));

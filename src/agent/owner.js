@@ -4,7 +4,8 @@ import { db } from '../db/index.js';
 import { now } from '../clock.js';
 import { inWindow } from '../guardrails.js';
 import { notifyOwner, leadLabel } from '../notify.js';
-import { sendNow, scheduleSend, setStatus, answerOwnerQuestion } from './setter.js';
+import { sendNow, scheduleSend, setStatus, answerOwnerQuestion, processFirstTouch } from './setter.js';
+import { matchListing, publicListingName } from '../listings.js';
 import * as hubspot from '../hubspot.js';
 import { audit } from '../policy.js';
 
@@ -14,7 +15,8 @@ N12 skip #12 · E12 <text> send your text instead
 A7 <answer> answer question Q7 (saved for future buyers)
 CA34 CA verified for L34: unlocks OM, rent roll, financials
 T34 take over lead L34 (bot goes quiet) · B34 bot resumes L34
-PAUSE / RESUME (kill switch) · STATUS`;
+PAUSE / RESUME (kill switch) · STATUS
+TEST <listing> your cell plays a buyer for 2h (commands then need #, e.g. #Y12) · #ENDTEST stops`;
 
 async function approve(id, overrideText) {
   const a = await db.getApproval(id);
@@ -48,6 +50,32 @@ async function reject(id) {
   return notifyOwner(`Skipped #${id}.`);
 }
 
+/** TEST <listing>: Pierce's own cell becomes a test buyer on that listing for 2 hours (no HubSpot, any hour). */
+export async function startOwnerTest(property, { hours = 2 } = {}) {
+  const listing = await matchListing(property);
+  if (!listing) return notifyOwner(`TEST: no listing matches "${property}". Try the name as it shows on Crexi.`);
+  const fields = {
+    first_name: config.owner.firstName, last_name: config.owner.name.split(' ').slice(1).join(' ') || null, email: null,
+    source: 'listing_email', platform: 'crexi', status: 'new', listing_id: listing.id, listing_code: listing.listing_code ?? null,
+    property_name: publicListingName(listing.name), inquiry: 'TEST inquiry (Pierce)', raw: { test: true },
+    next_action_at: now().toISOString(), first_email_at: null, followup_count: 0, qualification: {}, ca_verified: false,
+    reply_due_at: null, reply_pending_since: null, hubspot_tasks: {}, preferred_channel: 'sms',
+  };
+  const existing = await db.findLeadByPhone(config.owner.phone);
+  const lead = existing ? await db.updateLead(existing.id, fields) : await db.insertLead({ phone: config.owner.phone, auto_send: true, ...fields });
+  await db.setSetting('owner_test', { lead_id: lead.id, expires_at: new Date(+now() + hours * 3600e3).toISOString() });
+  await audit('owner_test_started', { leadId: lead.id, actor: 'pierce', detail: { listing: listing.name } });
+  await notifyOwner(`TEST on: your cell is buyer L${lead.id} on ${publicListingName(listing.name)} for ${hours}h. Reply like a buyer. Commands need # first (#STATUS, #ENDTEST).`);
+  return processFirstTouch(lead);
+}
+
+export async function endOwnerTest() {
+  const t = await db.getSetting('owner_test');
+  if (t?.lead_id) { const lead = await db.getLead(t.lead_id); if (lead) await db.updateLead(lead.id, { status: 'human' }); }
+  await db.setSetting('owner_test', null);
+  return notifyOwner('TEST off. Your texts are commands again.');
+}
+
 export async function handleOwnerCommand(raw) {
   const t = String(raw || '').trim();
   let m;
@@ -60,6 +88,8 @@ export async function handleOwnerCommand(raw) {
     const line = Object.entries(c).map(([k, v]) => `${k} ${v}`).join(', ') || 'no leads yet';
     return notifyOwner(`${(await db.getSetting('paused')) ? 'PAUSED. ' : ''}Leads: ${line}. Pending approvals: ${pending.map((a) => `#${a.id}`).join(' ') || 'none'}`);
   }
+  if ((m = t.match(/^test\s+(.+)$/i))) return startOwnerTest(m[1].trim());
+  if (/^end\s?test$/i.test(t)) return endOwnerTest();
   if (/^ya$/i.test(t)) { for (const a of await db.listPendingApprovals()) await approve(a.id); return null; }
   if ((m = t.match(/^y\s*#?(\d+)$/i))) return approve(Number(m[1]));
   if ((m = t.match(/^n\s*#?(\d+)$/i))) return reject(Number(m[1]));
