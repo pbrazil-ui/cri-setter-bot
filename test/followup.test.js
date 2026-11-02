@@ -472,3 +472,14 @@ test('a sync stops between files when this instance is no longer the leader (no 
   setSyncGuard(() => false);
   try { await assert.rejects(() => syncDropbox(), (e) => e.handover === true); } finally { setSyncGuard(() => true); }
 });
+
+test('intro email uses the listing\'s Crexi links: listing page, flyer, and the OM link (Crexi asks for the CA there)', async () => {
+  const L = 'https://www.crexi.com/properties/2467488/california-mobile-hacienda-park';
+  await db.upsertListing({ hubspot_deal_id: 'h9', name: 'Boon Chan - Hacienda Mobile Park', crexi_url: L, ca_link: `${L}?offeringMemorandum=download`, facts: { flyer_url: `${L}?flyer=download` } });
+  await ingestEmail({ From: 'notifications@crexi.com', Subject: 'New lead', TextBody: 'Name: Ann Buyer\nEmail: ann@example.com\nProperty: Mobile Hacienda Park\nMessage: info please' });
+  const m = mockMailbox.at(-1).text;
+  assert.match(m, new RegExp(`Listing page: ${L.replace(/[/.?]/g, '\\$&')}\\n`));
+  assert.match(m, /Flyer: https:\/\/www\.crexi\.com\/properties\/2467488\/california-mobile-hacienda-park\?flyer=download/);
+  assert.match(m, /You can sign the NDA here to unlock the OM and data room: https:\/\/www\.crexi\.com\/properties\/2467488\/california-mobile-hacienda-park\?offeringMemorandum=download/);
+  assert.ok(!/Boon|Chan/.test(m));
+});

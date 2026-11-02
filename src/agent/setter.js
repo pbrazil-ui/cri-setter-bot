@@ -40,10 +40,12 @@ const linkLine = (label, url) => templates.email_details_link.replace('{label}',
 function emailDetails(listing, links = []) {
   if (!listing || !isAvailable(listing)) return '';
   const page = listing.hub_url || listing.crexi_url;
+  const flyer = listing.facts?.flyer_url; // e.g. Crexi's ?flyer=download link, set per listing
   return [
     listing.summary ? templates.email_details_summary.replace('{summary}', listing.summary) : '',
     page ? linkLine('Listing page', page) : '',
-    ...links.map((l) => linkLine(l.label, l.url)),
+    flyer ? linkLine('Flyer', flyer) : '',
+    ...links.filter((l) => !(flyer && /flyer/i.test(l.label))).map((l) => linkLine(l.label, l.url)),
     listing.ca_link ? templates.email_details_ca.replace('{ca_link}', listing.ca_link) : '',
   ].join('');
 }
