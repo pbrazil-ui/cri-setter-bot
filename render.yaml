@@ -7,9 +7,10 @@ services:
     name: cri-setter-bot
     runtime: node
     plan: starter            # always on; free instances sleep and would miss texts
+    region: oregon
     branch: claude/project-setup-integrations-un1lo6
     autoDeploy: true
-    buildCommand: npm ci
+    buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
     numInstances: 1          # one instance; deploy overlap is handled by the job lease (supabase/schema.sql)
