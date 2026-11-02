@@ -14,6 +14,7 @@ import { notifyOwner, leadLabel } from '../notify.js';
 import * as hubspot from '../hubspot.js';
 import { platformPhrase } from '../platforms.js';
 import { publicListingName, isAvailable, availabilityPhrase } from '../listings.js';
+import { dataRoomProblem } from '../dataroom.js';
 
 const templates = JSON.parse(readFileSync(new URL('../../playbook/templates.json', import.meta.url), 'utf8'));
 export const MUTED = new Set(['escalated', 'human', 'opted_out', 'wrong_number']);
@@ -178,6 +179,16 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
     forceApproval = true;
     reason = 'says Pierce called or left a voicemail; the bot cannot call';
     await audit('blocked_false_claim', { leadId: lead.id, detail: { kind, text } });
+  }
+  // A Dropbox data room link opens a whole folder: only CA-verified buyers of that listing get it on the bot's own say-so.
+  // Pierce's own A# answer to this buyer is his call; a stored answer reused later still passes through here.
+  if (kind !== 'answer') {
+    const roomIssue = dataRoomProblem(text, lead, lead.listing_id ? await db.getListing(lead.listing_id) : null);
+    if (roomIssue) {
+      forceApproval = true;
+      reason = roomIssue;
+      await audit('held_data_room_link', { leadId: lead.id, detail: { kind, reason: roomIssue } });
+    }
   }
   const key = classify({ kind, lead, flags, decision, human, channel: email ? 'email' : 'sms' });
   const pol = await resolve(key, { countAutoSendsLastHour: await db.countAutoSendsSince(new Date(+now() - 3600e3).toISOString()) });

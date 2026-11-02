@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { localTimeString } from '../guardrails.js';
 import { publicListingName } from '../listings.js';
+import { dataRoomFor, DATA_ROOM_KEYS } from '../dataroom.js';
+
+const omit = (o, keys) => Object.fromEntries(Object.entries(o || {}).filter(([k]) => !keys.includes(k)));
 
 const playbookPath = fileURLToPath(new URL('../../playbook/setter-playbook.md', import.meta.url));
 const loadPlaybook = () => { try { return readFileSync(playbookPath, 'utf8'); } catch { return ''; } };
@@ -16,7 +19,7 @@ export const loadSkills = () => {
   return skillsCache;
 };
 
-function listingFacts(listing) {
+function listingFacts(listing, lead) {
   if (!listing) return 'No listing matched. Do not state any property facts; offer a quick call.';
   if (listing.status && listing.status !== 'active') {
     const st = listing.status === 'closed' ? 'SOLD' : 'UNDER CONTRACT';
@@ -25,8 +28,11 @@ function listingFacts(listing) {
   const f = {
     name: publicListingName(listing.name), city: listing.city, status: listing.status, asking_price: listing.asking_price,
     spaces: listing.spaces, summary: listing.summary, ca_link: listing.ca_link, listing_hub: listing.hub_url,
-    crexi: listing.crexi_url, ...listing.facts,
+    crexi: listing.crexi_url, ...omit(listing.facts, DATA_ROOM_KEYS),
   };
+  // The Dropbox data room is an open folder link: only CA-verified buyers ever see it (deliver() enforces this too)
+  const room = dataRoomFor(listing);
+  if (room) f.data_room = lead?.ca_verified ? `${room} (Dropbox, view-only: the due diligence files. Share it when they ask for DD materials or are ready to dig in)` : 'available once the CA is signed and verified (do not share any link to it yet)';
   const lines = Object.entries(f).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => `- ${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
   const dns = listing.do_not_share ? `\nDO NOT SHARE (internal only): ${listing.do_not_share}` : '';
   return lines.join('\n') + dns;
@@ -51,7 +57,7 @@ ${loadPlaybook()}
 ${loadSkills()}
 
 # LISTING FACTS (always safe to state)
-${listingFacts(listing)}
+${listingFacts(listing, lead)}
 
 # Documents & access
 - CA status for this lead: ${lead.ca_verified ? 'VERIFIED. You may use the OM, rent roll, financials and seller Q&A.' : 'NOT VERIFIED. Only public info. If they want the OM, rent roll or financials, send the CA link' + (listing?.ca_link ? ` (${listing.ca_link})` : ' (ask Pierce for it)') + '.'}

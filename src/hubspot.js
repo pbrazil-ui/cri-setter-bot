@@ -263,7 +263,7 @@ export function listingStatusFor(p) {
 
 /** Pull listings (Listed, Under Contract, Closed Won) from the Sellers pipeline into the local listings table. */
 export const syncListingsFromHubSpot = safe(async () => {
-  const props = ['dealname', 'dealstage', 'hubspot_owner_id', 'listing_code', 'listing_status', 'crexi_listing_url', 'ca_link', 'listing_hub_url'];
+  const props = ['dealname', 'dealstage', 'hubspot_owner_id', 'listing_code', 'listing_status', 'crexi_listing_url', 'ca_link', 'om_link', 'listing_hub_url'];
   const st = hs.sellerStages;
   const existing = new Map((await db.listListings()).map((l) => [l.hubspot_deal_id, l]));
   let after; let count = 0;
@@ -288,6 +288,7 @@ export const syncListingsFromHubSpot = safe(async () => {
         status, owner_id: String(p.hubspot_owner_id),
         // HubSpot wins when it has a value; a link set by hand in the bot's DB is kept while HubSpot's field is blank
         crexi_url: p.crexi_listing_url || prev?.crexi_url || null, ca_link: p.ca_link || prev?.ca_link || null, hub_url: p.listing_hub_url || prev?.hub_url || null,
+        om_link: p.om_link || prev?.om_link || null,
       });
       count++;
     }

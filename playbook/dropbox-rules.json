@@ -3,13 +3,15 @@
   "listings_root": "/Brokerage/01 - Brokerage/Deals/01 - Listed",
   "under_contract_root": "/Brokerage/01 - Brokerage/Deals/02 - Under Contract",
   "_listing_status": "A listing's status is the MOST restrictive of: HubSpot listing_status, HubSpot Sellers stage, and the Dropbox folder (02 - Under Contract = under contract). A 01 - Listed folder with no HubSpot match becomes an active listing on its own.",
+  "_data_room": "data_room_block: a file matching that rule (archive, seller correspondence, contracts, financing, insurance, employment, tax returns, bank statements, LOI/BOV/listing agreement) must never sit in a listing's Dropbox data room. The doc sync checks every file in listing.facts.data_room_path; while any is there the bot stops using the data room link and texts Pierce once (src/dataroom.js, src/docs/sync.js).",
   "sop_root": "/Brokerage/04 - SOP's",
   "max_file_mb": 25,
   "rules": [
     {
       "match": "zz - archive|superseded|/archive/|\\(old\\)",
       "tier": "exclude",
-      "why": "old versions"
+      "why": "old versions",
+      "data_room_block": true
     },
     {
       "match": "\\.(jpe?g|png|webp|heic|gif|mp4|mov|zip)$",
@@ -20,12 +22,14 @@
       "match": "correspondence|email thread|seller qa/.*(email|thread)",
       "tier": "sensitive",
       "doc_type": "history",
-      "why": "past conversations: the bot learns what has been asked/offered before; replies using them are reviewed"
+      "why": "past conversations: the bot learns what has been asked/offered before; replies using them are reviewed",
+      "data_room_block": true
     },
     {
       "match": "purchase agreement|escrow|closing doc|underwriting|debt quote|financing \\(debt|/14 - financing|bank statement|tax return|employment|employee|handbook|insurance|executed|signed lease|\\bloi\\b|commission agreement|listing agreement|\\bbov\\b",
       "tier": "exclude",
-      "why": "internal, legal or PII"
+      "why": "internal, legal or PII",
+      "data_room_block": true
     },
     {
       "match": "flyer|teaser|brochure",

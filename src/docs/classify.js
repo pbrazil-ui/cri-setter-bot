@@ -10,6 +10,11 @@ export function classifyFile(relPath, sizeBytes = 0) {
   return { tier: hit.tier, doc_type: hit.doc_type || 'other', why: hit.why };
 }
 
+/** True if a file at this path (inside the listing folder) must never be in a buyer data room (rules with data_room_block). */
+export function blocksDataRoom(relPath) {
+  return Boolean(compiled.find((r) => r.re.test(relPath))?.data_room_block);
+}
+
 export const TIER_ORDER = { public: 0, ca: 1, sensitive: 2, internal: 3 };
 /** Which tiers a lead may see. Sensitive chunks are readable but flagged so the answer goes to Pierce. */
 export const visibleTiers = (lead) => (lead?.ca_verified ? ['public', 'ca', 'sensitive'] : ['public']);

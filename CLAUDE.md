@@ -41,7 +41,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - `src/db/` `supabase.js` (prod) / `memory.js` (tests), same interface · `supabase/schema.sql`
 
 ## Commands
-- `npm install && npm test` (79 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
+- `npm install && npm test` (84 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
 - `npm run dev` local server, all mocks, :3000
 - `open "$PUBLIC_URL/admin/selftest?key=$INGEST_SECRET"` after any deploy or key change: every check should be ok
 - `curl -X POST "$PUBLIC_URL/admin/sync-docs?key=$INGEST_SECRET"` force a Dropbox sync
@@ -56,7 +56,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 1. Every outbound message passes `deliver()`: opt-out → rate limit → approval → time window.
 2. Opt-outs are permanent and handled in code, never by the model.
 3. Price/terms/offers/commission/co-broke/legal → approval required and thread muted (`escalated`).
-4. **Document tiers** (`playbook/dropbox-rules.json`): `public` anyone · `ca` only when `lead.ca_verified` · `sensitive` bot may read, reply needs Pierce's Y · `exclude` never loaded (archives, media, contracts, financing, PII, employment, insurance). Enforced in `src/agent/tools.js`, not the prompt.
+4. **Document tiers** (`playbook/dropbox-rules.json`): `public` anyone · `ca` only when `lead.ca_verified` · `sensitive` bot may read, reply needs Pierce's Y · `exclude` never loaded (archives, media, contracts, financing, PII, employment, insurance). Enforced in `src/agent/tools.js`, not the prompt. Dropbox **data rooms** (Pierce, Nov 2 2026): one view-only folder link per listing in `listing.facts.data_room_url` / `data_room_path`; only CA-verified buyers of THAT listing get it (`deliver()` holds any Dropbox folder link otherwise, `src/dataroom.js`), and the doc sync blocks the link (`data_room_blocked`, one text to Pierce) while the folder holds any `data_room_block` file (archive, seller correspondence, contracts, financing, insurance, employment).
 5. Tenant names are never stored (rent roll parser drops them; extraction prompt forbids PII).
 6. Numbers come from `rentRollStats`, `summarizeFinancials`, `calculate`. The model never does arithmetic.
 7. Unknown answer → `ask_pierce`, never a guess. One holding reply per open question.
