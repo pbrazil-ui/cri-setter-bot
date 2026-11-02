@@ -82,3 +82,19 @@ test('email history: past threads are matched to listings without Graph $search 
   assert.deepEqual((m.get(16) || []).map((x) => x.id).sort(), ['b', 'd'], 'alias and seller-stripped deal name both match');
   assert.equal(m.get(9), undefined);
 });
+
+test('inbox poller: a denied read is logged and texted to Pierce once, never swallowed', async () => {
+  const { pollInboxForLeads } = await import('../src/intake/mailbox.js');
+  const email = await import('../src/email.js');
+  const { ownerLog } = await import('../src/notify.js');
+  const prev = { mode: config.email.mode, read: config.email.readMailboxes };
+  Object.assign(config.email, { mode: 'mock', readMailboxes: ['someone-else@example.com'] }); // not allowlisted -> refused like a 403
+  ownerLog.length = 0;
+  try {
+    const a = await pollInboxForLeads();
+    const b = await pollInboxForLeads();
+    assert.ok(a.errors?.length && b.errors?.length);
+    assert.equal(ownerLog.filter((t) => /Lead emails are NOT being read/.test(t)).length, 1, 'one text, not one per minute');
+  } finally { Object.assign(config.email, { mode: prev.mode, readMailboxes: prev.read }); }
+  void email;
+});

@@ -8,6 +8,7 @@ import { listInboxSince } from '../email.js';
 import { ingestEmail, normalizeEmailPayload } from './email.js';
 import { detectPlatform } from '../platforms.js';
 import { handleInboundEmail } from '../agent/setter.js';
+import { notifyOwner } from '../notify.js';
 
 const AUTO_REPLY = /^(automatic reply|auto(matic)?[- ]?reply|out of (the )?office|undeliverable|delivery status notification|mail delivery failed|returned mail)/i;
 
@@ -40,8 +41,27 @@ export async function pollInboxForLeads() {
   for (const mailbox of [...new Set(config.email.readMailboxes)]) {
     try { await pollOne(mailbox, out); } catch (e) { out.errors.push(`${mailbox}: ${e.message.slice(0, 200)}`); }
   }
+  await reportPollErrors(out.errors);
   if (!out.errors.length) delete out.errors;
   return out;
+}
+
+// A failing inbox read must never be silent (Nov 2 2026: 403s were swallowed, so lead emails went unread with no sign).
+// Logged every time; Pierce gets one text when it starts failing and one when it recovers.
+let pollFailing = false;
+async function reportPollErrors(errors) {
+  if (errors.length) {
+    console.error('[inbox leads] read failed:', errors.join(' | '));
+    if (!pollFailing) {
+      pollFailing = true;
+      const denied = errors.some((e) => / 40[13]\b|AccessDenied/i.test(e));
+      await notifyOwner(`Lead emails are NOT being read: ${denied ? 'Microsoft denied access to your mailbox (Exchange RBAC for the CRI Setter Bot app)' : errors[0].slice(0, 160)}. Texts still work. Fix steps are in the setup guide.`).catch(() => {});
+    }
+  } else if (pollFailing) {
+    pollFailing = false;
+    console.log('[inbox leads] reading again');
+    await notifyOwner('Lead emails are being read again.').catch(() => {});
+  }
 }
 
 async function pollOne(mailbox, out) {
