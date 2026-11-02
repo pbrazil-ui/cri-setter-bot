@@ -40,7 +40,8 @@ export const config = {
     sendMode: env.EMAIL_SEND_MODE || 'send',
     tenantId: env.MS_TENANT_ID, clientId: env.MS_CLIENT_ID, clientSecret: env.MS_CLIENT_SECRET,
     mailbox: env.EMAIL_MAILBOX || 'pbrazil@cribrokerage.com',
-    alwaysCc: list(env.EMAIL_ALWAYS_CC, ['DylanB@cricommercial.com']),
+    // Pierce (Nov 2 2026): no cc. Not Dylan, not Duane. Set EMAIL_ALWAYS_CC only if he asks for one.
+    alwaysCc: list(env.EMAIL_ALWAYS_CC, []),
     // Graph-sent mail gets no Outlook signature, so the bot appends this one (from Pierce's my-writing-style skill)
     signatureHtml: env.EMAIL_SIGNATURE_HTML ?? 'Pierce Brazil<br>Senior Investment Associate<br>Commercial Real Estate Investors, Inc.<br>DRE #02247759 | CRI DRE #01807613<br>Direct (949) 335-5921<br>cribrokerage.com',
     maxAttachmentMb: num(env.EMAIL_MAX_ATTACHMENT_MB, 3),
@@ -49,7 +50,9 @@ export const config = {
     // Pierce (Nov 2 2026): ONLY his two mailboxes, never Dylan's, Duane's or anyone else's. Enforced in email.js on every
     // Graph call; also restrict the app in Exchange (SETUP-PROMPT step 6f) so the credential itself can't reach others.
     allowedMailboxes: list(env.EMAIL_ALLOWED_MAILBOXES, ['pbrazil@cribrokerage.com', 'pbrazil@cricommercial.com']).map((s) => s.toLowerCase()),
-    readMailboxes: list(env.EMAIL_READ_MAILBOXES, ['pbrazil@cribrokerage.com', 'pbrazil@cricommercial.com']).map((s) => s.toLowerCase()),
+    // one inbox with two addresses (Pierce, Nov 2 2026): read it once, via EMAIL_MAILBOX (must be the mailbox's sign-in
+    // name / UPN in Entra, which is what Graph resolves; the other address is an alias of the same inbox)
+    readMailboxes: list(env.EMAIL_READ_MAILBOXES, [env.EMAIL_MAILBOX || 'pbrazil@cribrokerage.com']).map((s) => s.toLowerCase()),
     // Dylan's listing leads reach the bot only if Dylan forwards them to Pierce (his inbox is never read)
     trustedForwarders: list(env.EMAIL_TRUSTED_FORWARDERS, ['dylanb@cricommercial.com']).map((s) => s.toLowerCase()),
   },

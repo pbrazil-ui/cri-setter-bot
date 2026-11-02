@@ -74,19 +74,19 @@ RULES
       Then "Grant admin consent". Both must show a green check.
    d. Certificates & secrets > New client secret, 24 months. Copy the VALUE (not the Secret ID) = MS_CLIENT_SECRET.
       Tell Pierce the expiry date so he can calendar it.
-   e. Confirm with Pierce that pbrazil@cribrokerage.com and pbrazil@cricommercial.com are in THIS tenant, and whether
-      they are one mailbox (alias) or two. The bot reads and sends ONLY from these two, never Dylan's, Duane's or anyone's.
+   e. pbrazil@cribrokerage.com and pbrazil@cricommercial.com are ONE inbox with two addresses (Pierce). In Entra >
+      Users > Pierce Brazil, note the "User principal name" (sign-in name). That exact address is EMAIL_MAILBOX in step 7.
+      The bot reads and sends ONLY from this inbox, never Dylan's, Duane's or anyone's, and cc's nobody.
    f. REQUIRED, admin only: lock the app to Pierce's mailbox in Exchange. Without this, Mail.ReadWrite would let the
       app open every mailbox in the company (the code refuses, but the credential itself must not be able to).
       Give the admin these commands for Terminal on a Mac (PowerShell: `brew install powershell`, then `pwsh`):
         Install-Module ExchangeOnlineManagement -Scope CurrentUser
         Connect-ExchangeOnline -UserPrincipalName <admin email>
-        New-DistributionGroup -Name "CRI Setter Bot Mailboxes" -Alias setterbotmailboxes -Type Security -Members pbrazil@cribrokerage.com
-        (if pbrazil@cricommercial.com is a separate mailbox: Add-DistributionGroupMember setterbotmailboxes -Member pbrazil@cricommercial.com)
+        New-DistributionGroup -Name "CRI Setter Bot Mailboxes" -Alias setterbotmailboxes -Type Security -Members <EMAIL_MAILBOX from 6e>
         New-ApplicationAccessPolicy -AppId <MS_CLIENT_ID> -PolicyScopeGroupId setterbotmailboxes -AccessRight RestrictAccess -Description "CRI setter bot: Pierce only"
         Test-ApplicationAccessPolicy -Identity pbrazil@cribrokerage.com -AppId <MS_CLIENT_ID>    -> Granted
         Test-ApplicationAccessPolicy -Identity DylanB@cricommercial.com -AppId <MS_CLIENT_ID>   -> Denied
-      It can take up to an hour to apply. The self-test (step 7g) flags it if the app can still open Dylan's mailbox.
+      It can take up to an hour to apply. The bot itself never tests against anyone else's mailbox.
 
 7. RAILWAY (railway.com). Railway, not Vercel: the bot is a server that runs timers all day.
    a. New Project > Deploy from GitHub repo > pbrazil-ui/cri-setter-bot.
@@ -121,7 +121,7 @@ DROPBOX_REFRESH_TOKEN=<5e>
 MS_TENANT_ID=<6b>
 MS_CLIENT_ID=<6b>
 MS_CLIENT_SECRET=<6d>
-EMAIL_MAILBOX=pbrazil@cribrokerage.com
+EMAIL_MAILBOX=<Pierce's sign-in name from 6e>
 EMAIL_SEND_MODE=send
 DISCLOSE_AI=false
 
@@ -136,9 +136,9 @@ DISCLOSE_AI=false
       It checks Supabase, Claude, RingCentral (number is SMS-enabled, webhook active), HubSpot, Dropbox and Outlook
       without sending anything. Every check should say "ok": true. Fix anything under "problems" before going further.
 
-7h. DYLAN'S LEADS (Dylan does this in his own Outlook; the bot never reads his inbox):
-   Outlook > Settings > Mail > Rules > Add new rule: From contains crexi.com, loopnet.com, rvparkstore.com,
-   mhvillage.com > Forward to pbrazil@cribrokerage.com. The bot accepts "FW:" lead emails from Dylan only.
+7h. DYLAN'S LEADS: Pierce says both he and Dylan get the lead emails, so the bot already sees Dylan's listing leads in
+   Pierce's inbox. No forwarding rule needed. (Only if a platform ever sends a lead to Dylan alone: Dylan forwards it
+   to pbrazil@cribrokerage.com; the bot accepts "FW:" lead emails from him and never double-contacts a buyer.)
 
 8. UPTIME (uptimerobot.com, free plan)
    New monitor > HTTP(s) > URL: PUBLIC_URL/health > every 5 minutes > alert contact: Pierce's email and cell.

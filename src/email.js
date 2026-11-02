@@ -40,14 +40,8 @@ export async function mailCheck() {
   for (const mb of [...new Set([E.mailbox, ...E.readMailboxes])]) {
     try { inboxes[mb] = (await graph('GET', `/users/${encodeURIComponent(mb)}/mailFolders/inbox?$select=totalItemCount`)).totalItemCount; } catch (e) { problems.push(`${mb}: ${e.message.slice(0, 160)}`); }
   }
-  // the app should NOT be able to open anyone else's mailbox (Exchange application access policy, SETUP-PROMPT 6f)
-  const probe = E.trustedForwarders[0];
-  if (probe) {
-    try {
-      const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(probe)}/mailFolders/inbox?$select=id`, { headers: { Authorization: `Bearer ${await getToken()}` } });
-      if (res.ok) problems.push(`the app can open ${probe}'s mailbox: add the Exchange application access policy (SETUP-PROMPT step 6f) so it can only reach Pierce's`);
-    } catch { /* network error: not a finding */ }
-  }
+  // No probe of anyone else's mailbox, ever (Pierce, Nov 2 2026). The Exchange policy is verified by the admin with
+  // Test-ApplicationAccessPolicy (SETUP-PROMPT 6f), not by the bot knocking on Dylan's inbox.
   if (E.sendMode === 'send' && !E.signatureHtml) problems.push('EMAIL_SEND_MODE=send but EMAIL_SIGNATURE_HTML is empty: sent emails will end at "Thank you," with no name');
   return { ok: !problems.length, send_from: E.mailbox, inboxes, send_mode: E.sendMode, problems };
 }

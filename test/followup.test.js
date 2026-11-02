@@ -241,8 +241,8 @@ test('Pierce, Nov 2: only his two mailboxes, never Dylan\'s or anyone else\'s; n
   assert.doesNotThrow(() => assertHubspotAllowed('PATCH', '/crm/v3/objects/deals/1'));
   for (const ep of ['files/delete_v2', 'files/permanently_delete', 'files/move_v2', 'sharing/revoke_shared_link']) assert.throws(() => assertDropboxAllowed(ep), /never deletes/, ep);
   assert.doesNotThrow(() => assertDropboxAllowed('sharing/create_shared_link_with_settings'));
-  assert.deepEqual(config.email.readMailboxes, ['pbrazil@cribrokerage.com', 'pbrazil@cricommercial.com']);
-  assert.deepEqual(config.email.alwaysCc, ['DylanB@cricommercial.com'], 'Dylan is cc\'d, never read');
+  assert.deepEqual(config.email.readMailboxes, ['pbrazil@cribrokerage.com'], 'one inbox, two addresses: read once');
+  assert.deepEqual(config.email.alwaysCc, [], 'no cc: not Dylan, not Duane (Pierce, Nov 2 2026)');
 });
 
 test('Dylan\'s listing leads: a forwarded platform email from Dylan becomes a lead; other mail from him does not', async () => {
@@ -275,4 +275,28 @@ test('HubSpot listing import asks only for Pierce\'s and Dylan\'s deals', async 
     const f = g.filters.find((x) => x.propertyName === 'hubspot_owner_id');
     assert.deepEqual(f, { propertyName: 'hubspot_owner_id', operator: 'IN', values: ['2145826500', '683980338'] });
   }
+});
+
+test('Pierce and Dylan both get the lead email: if Dylan also forwards it, the buyer is contacted once', async () => {
+  const body = 'Name: Kim Buyer\nEmail: kim@example.com\nPhone: 540-555-0122\nProperty: Lighthouse Resort\nMessage: info please';
+  mockInbox.push(
+    { id: 'orig', receivedDateTime: day(0, -0.2), from: { emailAddress: { address: 'notifications@crexi.com' } }, subject: 'New lead', body: { contentType: 'text', content: body } },
+    { id: 'fwd', receivedDateTime: day(0, -0.1), from: { emailAddress: { address: 'dylanb@cricommercial.com' } }, subject: 'Fwd: New lead', body: { contentType: 'text', content: `From: Crexi <notifications@crexi.com>\n${body}` } },
+  );
+  await inboxTick();
+  assert.equal(mockOutbox.filter((m) => m.to === '+15405550122').length, 1, 'one first text');
+  assert.equal(mockMailbox.filter((m) => m.to === 'kim@example.com').length, 1, 'one first email');
+  assert.deepEqual(mockMailbox.at(-1).cc, [], 'nobody cc\'d');
+});
+
+test('no code path calls Graph outside the mailbox guard', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const files = ['src/email.js', 'src/docs/history.js', 'src/selftest.js', 'src/intake/mailbox.js'];
+  for (const f of files) {
+    const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    const raw = [...src.matchAll(/graph\.microsoft\.com\/v1\.0\/users/g)].length;
+    const guarded = f === 'src/email.js' ? 0 : [...src.matchAll(/assertGraphAllowed\(/g)].length;
+    assert.ok(raw <= guarded, `${f}: ${raw} raw Graph user URLs, ${guarded} guarded`);
+  }
+  assert.ok(readdirSync(new URL('../src', import.meta.url)).length > 0);
 });
