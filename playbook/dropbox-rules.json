@@ -1,5 +1,5 @@
 {
-  "_note": "How the bot treats files in each listing's Dropbox folder. First matching rule wins (case-insensitive regex on the path inside the listing folder). tier: public = anyone; ca = only after CA verified; sensitive = bot may read but any answer using it needs Pierce's Y; exclude = never loaded.",
+  "_note": "How the bot treats files in each listing's Dropbox folder. First matching rule wins (case-insensitive regex on the path inside the listing folder). tier: public = anyone; ca = only after CA verified; sensitive = bot may read but any answer using it needs Pierce's Y; exclude = never loaded. Order matters (Nov 2 2026 audit): exclude rules run BEFORE the correspondence rule, so 'Insurance Correspondence' or a buyer's proof of funds in a correspondence folder is excluded, not loaded as sensitive.",
   "listings_root": "/Brokerage/01 - Brokerage/Deals/01 - Listed",
   "under_contract_root": "/Brokerage/01 - Brokerage/Deals/02 - Under Contract",
   "_listing_status": "A listing's status is the MOST restrictive of: HubSpot listing_status, HubSpot Sellers stage, and the Dropbox folder (02 - Under Contract = under contract). A 01 - Listed folder with no HubSpot match becomes an active listing on its own.",
@@ -19,16 +19,22 @@
       "why": "media"
     },
     {
+      "match": "broker internal|raw import|\\.md$|lead[ _-]?(list|report|tracker)|leads\\.csv|buyer (lead|tracking)|buyer and broker|target list|skip trace|/outreach/|va research|call sheet|proof of funds|\\bpof\\b|/uw/|underwriting package|/valuation/|/comps/|rent survey|data room index",
+      "tier": "exclude",
+      "why": "CRI-internal: broker notes, buyer/lead lists, skip traces, valuations and comps, another buyer's proof of funds",
+      "data_room_block": true
+    },
+    {
+      "match": "purchase agreement|escrow|closing doc|underwriting(?!\\s*&\\s*marketing)|debt quote|financing|lender|loan (proposal|docs?|application)|sba 504|debt quote|bank statement|tax return|employment|employee|handbook|insurance|executed|signed lease|\\bloi\\b|commission agreement|listing agreement|\\bbov\\b|(extended stay (contract|agreement)|cabin rental agreement)(?!.*(blank|template))|roster(?!.*redacted)|social security|\\bssn\\b",
+      "tier": "exclude",
+      "why": "internal, legal or PII (contracts, financing, insurance, employment, tax/bank, tenant-named leases, unredacted rosters)",
+      "data_room_block": true
+    },
+    {
       "match": "correspondence|email thread|seller qa/.*(email|thread)",
       "tier": "sensitive",
       "doc_type": "history",
       "why": "past conversations: the bot learns what has been asked/offered before; replies using them are reviewed",
-      "data_room_block": true
-    },
-    {
-      "match": "purchase agreement|escrow|closing doc|underwriting|debt quote|financing \\(debt|/14 - financing|bank statement|tax return|employment|employee|handbook|insurance|executed|signed lease|\\bloi\\b|commission agreement|listing agreement|\\bbov\\b",
-      "tier": "exclude",
-      "why": "internal, legal or PII",
       "data_room_block": true
     },
     {

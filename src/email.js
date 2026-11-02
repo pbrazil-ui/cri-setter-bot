@@ -39,7 +39,9 @@ async function graph(method, path, body) {
  * Mail.Send can't be checked without sending; Test-ServicePrincipalAuthorization covers it (SETUP-PROMPT 6f).
  */
 export async function mailCheck() {
-  if (E.mode !== 'live') return { mode: E.mode };
+  // email off = lead emails from Crexi/LoopNet aren't read and nothing is emailed: that's a failing check, not a green one
+  if (E.mode === 'off') return { ok: false, mode: 'off', problems: ['email is OFF: set MS_TENANT_ID, MS_CLIENT_ID and MS_CLIENT_SECRET in Render. Until then lead emails are not read and no email goes out.'] };
+  if (E.mode !== 'live') return { ok: true, mode: E.mode };
   const problems = []; const inboxes = {};
   for (const mb of [...new Set([E.mailbox, ...E.readMailboxes])]) {
     try { inboxes[mb] = (await graph('GET', `/users/${encodeURIComponent(mb)}/mailFolders/inbox?$select=totalItemCount`)).totalItemCount; } catch (e) {

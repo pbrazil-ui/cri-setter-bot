@@ -1,7 +1,8 @@
 // Check the environment BEFORE loading anything that talks to a service, so a missing variable prints one clear line.
-import { config, validateConfig } from './config.js';
+import { config, validateConfig, configWarnings } from './config.js';
 
 const missing = validateConfig();
+for (const w of configWarnings()) console.warn(`[config] ${w}`);
 if (missing.length) {
   console.error(`Missing env vars: ${missing.join(', ')}. See .env.example (and the service's Environment tab on Render).`);
   process.exit(1);

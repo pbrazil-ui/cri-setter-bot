@@ -53,7 +53,9 @@ export const config = {
   },
 
   email: {
-    mode: env.EMAIL_MODE || (env.MS_CLIENT_ID ? 'live' : 'off'), // live | mock | off
+    // live only when ALL three Microsoft values are set: a half-entered key leaves email off (with a warning) instead of
+    // stopping the whole bot from booting (Nov 2 2026: a missing MS_CLIENT_SECRET blocked every other fix from deploying)
+    mode: env.EMAIL_MODE || (env.MS_TENANT_ID && env.MS_CLIENT_ID && env.MS_CLIENT_SECRET ? 'live' : 'off'), // live | mock | off
     // Pierce (Nov 2 2026): "just send, not draft." send = sends after the policy gate; draft = leaves it in Outlook Drafts
     sendMode: env.EMAIL_SEND_MODE || 'send',
     tenantId: env.MS_TENANT_ID, clientId: env.MS_CLIENT_ID, clientSecret: env.MS_CLIENT_SECRET,
@@ -164,6 +166,15 @@ export const config = {
   maxMsgsPerLeadPerDay: num(env.MAX_MSGS_PER_LEAD_PER_DAY, 20),
   tickSeconds: num(env.TICK_SECONDS, 300),
 };
+
+/** Non-fatal setup problems, logged at boot and shown by the self-test. */
+export function configWarnings() {
+  const w = [];
+  const ms = ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET'];
+  const have = ms.filter((k) => env[k]);
+  if (!env.EMAIL_MODE && have.length && have.length < 3) w.push(`email is OFF: ${ms.filter((k) => !env[k]).join(', ')} not set (${have.join(', ')} are)`);
+  return w;
+}
 
 export function validateConfig() {
   const missing = [];

@@ -8,7 +8,7 @@ import { ingestEmail } from './intake/email.js';
 import { importCsv } from './intake/csv.js';
 import { upsertIncomingLead } from './intake/common.js';
 import { processFirstTouch } from './agent/setter.js';
-import { ensureSubscription } from './ringcentral.js';
+import { ensureSubscription, webhookAuthorized } from './ringcentral.js';
 import { tick, docSync } from './jobs.js';
 import { db } from './db/index.js';
 import { matchListing } from './listings.js';
@@ -33,7 +33,7 @@ export function buildApp() {
   app.post('/webhooks/ringcentral', express.json({ limit: '1mb' }), (req, res) => {
     const validation = req.get('Validation-Token');
     if (validation) { res.set('Validation-Token', validation); return res.status(200).end(); }
-    if (config.rc.verificationToken && req.get('Verification-Token') !== config.rc.verificationToken) return res.status(401).end();
+    if (!webhookAuthorized(req)) { console.warn('[rc webhook] rejected: missing or wrong key'); return res.status(401).end(); }
     res.status(200).end(); // ack fast; RingCentral retries slow endpoints
     handleRingCentralEvent(req.body).catch((e) => console.error('[rc event]', e));
   });
