@@ -412,3 +412,21 @@ test('fix 15: email off: a quiet lead WITH an email goes to nurture (not closed)
   assert.equal(mockMailbox.length, 1, 'nurture email once email is on');
   assert.match(mockMailbox[0].text, /are you still looking for MH or RV parks\?/);
 });
+
+test('Pierce, Nov 2: a text from a number that is not a lead (a seller, a contact) is never answered by the bot; Pierce gets it, B# hands it over', async () => {
+  const { handleInboundSms } = await import('../src/agent/setter.js');
+  const { mockOutbox } = await import('../src/ringcentral.js');
+  const { ownerLog } = await import('../src/notify.js');
+  const { db } = await import('../src/db/index.js');
+  const SELLER = '+19164596179';
+  const before = mockOutbox.filter((m) => m.to === SELLER).length;
+  ownerLog.length = 0;
+  const r = await handleInboundSms(SELLER, "Yes it's HMHP Inc", 'rc-seller-1');
+  assert.equal(r.forwarded, 'unknown_number');
+  const lead = await db.findLeadByPhone(SELLER);
+  assert.equal(lead.status, 'human', 'created muted');
+  await handleInboundSms(SELLER, 'I am not understanding', 'rc-seller-2');
+  assert.equal(mockOutbox.filter((m) => m.to === SELLER).length, before, 'the bot never texted them');
+  assert.ok(ownerLog.some((t) => /not a lead, L\d+\): "Yes it's HMHP Inc"\. The bot did NOT reply\. If it's a buyer, text B\d+/.test(t)));
+  assert.ok(ownerLog.some((t) => /replied \(your thread, bot muted\): "I am not understanding"/.test(t)), 'follow-ups also go to Pierce');
+});

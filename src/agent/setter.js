@@ -368,13 +368,14 @@ async function firstTouchStep(lead) {
 // ---------- inbound ----------
 export async function handleInboundSms(phone, text, rcMessageId) {
   let lead = await db.findLeadByPhone(phone);
-  if (!lead) {
-    lead = await db.insertLead({ phone, source: 'inbound_sms', status: 'engaged', auto_send: !!config.autoSend.inbound_sms });
-    await notifyOwner(`New text from unknown number ${phone}: "${text}" (L${lead.id})`);
-  }
+  // 949-335-5921 is Pierce's direct line: sellers, brokers and contacts text it too (Nov 2 2026: the bot answered a
+  // seller, Jacob, as if he were a buyer). A number that didn't come in through an inquiry is never answered by the
+  // bot: it's created muted ('human') and goes to Pierce, who can hand it to the bot with B#.
+  const unknown = !lead;
+  if (unknown) lead = await db.insertLead({ phone, source: 'inbound_sms', status: 'human', auto_send: false });
   await db.insertMessage({ lead_id: lead.id, direction: 'in', body: text, status: 'received', rc_message_id: rcMessageId || null });
   await audit('received', { leadId: lead.id, detail: { chars: text.length } });
-  lead = await captureEmail(lead, text);
+  if (!MUTED.has(lead.status)) lead = await captureEmail(lead, text); // a muted thread never triggers the intro email
   await db.supersedeApprovalsForLead(lead.id); // drafts written before this reply are stale
   await db.cancelScheduledForLead(lead.id);
   lead = await db.updateLead(lead.id, { last_inbound_at: iso(), followup_count: 0 });
@@ -395,6 +396,10 @@ export async function handleInboundSms(phone, text, rcMessageId) {
   if (await db.isOptedOut(phone)) {
     if (isStartKeyword(text)) { await db.removeOptOut(phone); await setStatus(lead, 'engaged'); return { resubscribed: true }; }
     return { ignored: 'opted_out' };
+  }
+  if (unknown) {
+    await notifyOwner(`Text from ${phone} (not a lead, L${lead.id}): "${text}". The bot did NOT reply. If it's a buyer, text B${lead.id} and the bot takes it.`);
+    return { forwarded: 'unknown_number' };
   }
   if (MUTED.has(lead.status)) {
     await notifyOwner(`${leadLabel(lead)} replied (your thread, bot muted): "${text}"`);
