@@ -66,7 +66,7 @@ Short and specific, often "[Property] - [Topic]": "Springtide MHP - OM", "Lakesi
 
 ## Signature reference (do not type into drafts; his email client appends it)
 
-Pierce Brazil, Senior Investment Associate, Commercial Real Estate Investors, Inc., DRE #02247759 | CRI DRE #01807613, Direct (949) 335-5921, cribrokerage.com, Irvine CA.
+Pierce Brazil, Senior Investment Associate, CRI Brokerage, DRE #02247759 | CRI DRE #01807613, Direct: 949.335.5921, 2152 Dupont Dr, Suite 270, Irvine, CA 92612, Website: cribrokerage.com, then the CONFIDENTIAL COMMUNICATION notice. (Pierce's exact block, Nov 2 2026; the bot appends it from `PIERCE_SIGNATURE_HTML` in src/config.js.)
 
 ## Quality check before returning any draft
 

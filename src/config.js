@@ -5,6 +5,17 @@ const bool = (v, d) => (v === undefined || v === '' ? d : ['1', 'true', 'yes', '
 const num = (v, d) => (v === undefined || v === '' ? d : Number(v));
 const list = (v, d) => (v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : d);
 
+// Pierce's email signature, verbatim as he sent it (Nov 2 2026: "use this email signature for communications").
+// Appended to every email the bot SENDS (Graph mail gets no Outlook signature). Override with EMAIL_SIGNATURE_HTML.
+const SIG_SMALL = 'font-size:11px;line-height:1.4;color:#666666';
+export const PIERCE_SIGNATURE_HTML = [
+  '<p style="margin:0">Pierce Brazil<br>Senior Investment Associate<br>CRI Brokerage<br>DRE #02247759 | CRI DRE #01807613<br>Direct: 949.335.5921</p>',
+  '<p style="margin:12px 0 0">2152 Dupont Dr, Suite 270<br>Irvine, CA 92612</p>',
+  '<p style="margin:12px 0 0">Website: <a href="https://cribrokerage.com">cribrokerage.com</a></p>',
+  `<p style="margin:16px 0 0;${SIG_SMALL}"><b>CONFIDENTIAL COMMUNICATION</b></p>`,
+  `<p style="margin:6px 0 0;${SIG_SMALL}">This electronic mail message and any attachments are private and confidential and are the property of the sender. The information contained in this electronic mail message is privileged and is intended only for the use of the individual(s) or entity(ies) named above. If you are not the intended recipient, be advised that any unauthorized disclosure, copying, distribution or the taking of any action in reliance on the contents of this information is strictly prohibited. If you have received this electronic mail message in error, please call the person at the number above, or notify me immediately at pbrazil@cribrokerage.com and delete the message and destroy your copy of the email.</p>`,
+].join('');
+
 const autoSendSources = list(env.AUTO_SEND_SOURCES, ['listing_email', 'inbound_sms', 'webhook']);
 
 export const config = {
@@ -45,8 +56,8 @@ export const config = {
     mailbox: env.EMAIL_MAILBOX || 'pbrazil@cribrokerage.com',
     // Pierce (Nov 2 2026, latest): cc Dylan on every email to a LEAD. Never on Pierce's own Brief/alerts. Not Duane.
     leadCc: list(env.EMAIL_LEAD_CC || env.EMAIL_ALWAYS_CC, ['DylanB@cricommercial.com']),
-    // Graph-sent mail gets no Outlook signature, so the bot appends this one (from Pierce's my-writing-style skill)
-    signatureHtml: env.EMAIL_SIGNATURE_HTML ?? 'Pierce Brazil<br>Senior Investment Associate<br>Commercial Real Estate Investors, Inc.<br>DRE #02247759 | CRI DRE #01807613<br>Direct (949) 335-5921<br>cribrokerage.com',
+    // Graph-sent mail gets no Outlook signature, so the bot appends Pierce's (his exact block, Nov 2 2026)
+    signatureHtml: env.EMAIL_SIGNATURE_HTML ?? PIERCE_SIGNATURE_HTML,
     maxAttachmentMb: num(env.EMAIL_MAX_ATTACHMENT_MB, 3),
     // read lead notifications (Crexi, LoopNet, ...) straight from the inbox: no Postmark, no forwarding rule
     pollLeads: bool(env.EMAIL_POLL_LEADS, true),
