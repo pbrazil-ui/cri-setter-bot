@@ -53,11 +53,13 @@ export async function mailCheck() {
   return { ok: !problems.length, send_from: E.mailbox, inboxes, send_mode: E.sendMode, problems };
 }
 
-/** Inbox messages received at/after `sinceIso`, oldest first. Needs Mail.ReadWrite (already required). */
+/** Messages (any folder) received at/after `sinceIso`, oldest first. Needs Mail.ReadWrite (already required). */
 export async function listInboxSince(sinceIso, top = 50, mailbox = E.mailbox) {
-  if (E.mode === 'mock') { assertGraphAllowed('GET', `/users/${mailbox}/mailFolders/inbox/messages`); return mockInbox.filter((m) => (m.mailbox || E.mailbox) === mailbox && m.receivedDateTime >= sinceIso).sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime)).slice(0, top); }
+  if (E.mode === 'mock') { assertGraphAllowed('GET', `/users/${mailbox}/messages`); return mockInbox.filter((m) => (m.mailbox || E.mailbox) === mailbox && m.receivedDateTime >= sinceIso).sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime)).slice(0, top); }
   const q = new URLSearchParams({ $filter: `receivedDateTime ge ${sinceIso}`, $orderby: 'receivedDateTime asc', $top: String(top), $select: 'id,conversationId,receivedDateTime,from,subject,body' });
-  const r = await graph('GET', `/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages?${q}`);
+  // ALL folders, not just Inbox: Superhuman's "Done", Outlook rules or Junk can move a Crexi lead out of the Inbox
+  // before the next poll. Sent items / drafts are from Pierce, so the sender filter in mailbox.js ignores them.
+  const r = await graph('GET', `/users/${encodeURIComponent(mailbox)}/messages?${q}`);
   return r?.value || [];
 }
 

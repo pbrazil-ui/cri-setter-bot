@@ -359,3 +359,21 @@ test('Dropbox no-argument calls send the JSON body null (an empty body is reject
     assert.equal(r.root_namespace, '12987598657');
   } finally { globalThis.fetch = realFetch; Object.assign(cfg.dropbox, saved); }
 });
+
+test('lead emails are read from every folder (Superhuman "Done" / Outlook rules can move them out of the Inbox)', async () => {
+  const { listInboxSince } = await import('../src/email.js');
+  const realFetch = globalThis.fetch; const urls = [];
+  globalThis.fetch = async (url, o) => {
+    const u = new URL(url); urls.push(u.pathname);
+    if (u.hostname === 'login.microsoftonline.com') return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_in: 3600 }) };
+    if (u.hostname === 'graph.microsoft.com') return { ok: true, status: 200, json: async () => ({ value: [] }) };
+    return realFetch(url, o);
+  };
+  const saved = { ...config.email };
+  Object.assign(config.email, { mode: 'live', tenantId: 't', clientId: 'c', clientSecret: 's' });
+  try {
+    await listInboxSince('2026-11-02T00:00:00Z', 50, 'pbrazil@cribrokerage.com');
+    assert.ok(urls.includes('/v1.0/users/pbrazil%40cribrokerage.com/messages'), urls.join(' '));
+    assert.ok(!urls.some((p) => p.includes('/mailFolders/inbox/messages')));
+  } finally { globalThis.fetch = realFetch; Object.assign(config.email, saved); }
+});

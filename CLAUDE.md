@@ -33,13 +33,13 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - `src/docs/` `sync.js` Dropbox → DB mirror · `classify.js` + `playbook/dropbox-rules.json` folder → tier · `ingest.js` file → chunks/units/line items · `rentroll.js` + `financials.js` pure math · `search.js` keyword retrieval
 - `src/dropbox.js` Dropbox API (team root, download, view-only links) · `src/email.js` Graph mail · `src/ringcentral.js` SMS
 - `src/hubspot.js` contacts, Buyers deals, stage rules (`decideStageMove`), notes, listing import
-- `src/intake/` lead emails (`email.js`), inbox poller (`mailbox.js`: reads platform-sender emails from Pierce's Outlook every minute, so no Postmark/forwarding), CSV (`csv.js`), shared upsert (`common.js`) · `src/platforms.js` which site a lead came from
+- `src/intake/` lead emails (`email.js`), mailbox poller (`mailbox.js`: reads platform-sender emails from ALL folders of Pierce's Outlook every minute, since Superhuman "Done"/rules can move them, so no Postmark/forwarding), CSV (`csv.js`), shared upsert (`common.js`) · `src/platforms.js` which site a lead came from
 - `src/selftest.js` `GET /admin/selftest?key=` read-only check of every integration (number SMS-enabled, webhook active, mailbox readable, models available)
 - `src/guardrails.js` opt-out, quiet hours, human-only topics · `src/calc.js` safe arithmetic
 - `src/db/` `supabase.js` (prod) / `memory.js` (tests), same interface · `supabase/schema.sql`
 
 ## Commands
-- `npm install && npm test` (70 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
+- `npm install && npm test` (71 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
 - `npm run dev` local server, all mocks, :3000
 - `open "$PUBLIC_URL/admin/selftest?key=$INGEST_SECRET"` after any deploy or key change: every check should be ok
 - `curl -X POST "$PUBLIC_URL/admin/sync-docs?key=$INGEST_SECRET"` force a Dropbox sync
