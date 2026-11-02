@@ -5,7 +5,7 @@ import { ensureSubscription } from './ringcentral.js';
 import { syncListingsFromHubSpot } from './hubspot.js';
 import { notifyOwner } from './notify.js';
 import { processFirstTouch, runFollowups, sendDueScheduled, isPaused, processDueReplies } from './agent/setter.js';
-import { syncDropbox } from './docs/sync.js';
+import { syncDropbox, setSyncGuard } from './docs/sync.js';
 import { sendMorningBrief } from './brief.js';
 import { importEmailHistory } from './docs/history.js';
 import { audit } from './policy.js';
@@ -74,20 +74,28 @@ export async function replyTick() {
   try { await sendDueScheduled(); return await processDueReplies(); } catch (e) { console.error('[replyTick]', e); return []; } finally { replying = false; }
 }
 
-let syncing = false;
+let syncing = false; let syncFailures = 0;
 export async function docSync() {
   if (syncing) return { skipped: 'running' };
   syncing = true;
   try {
     const r = await syncDropbox();
+    syncFailures = 0;
     if (r) {
       console.log('[dropbox sync]', JSON.stringify(r));
       if (r.unmatched_folders.length) console.warn('[dropbox sync] folders with no matching listing:', r.unmatched_folders.join(' | '));
     }
     return r;
   } catch (e) {
+    if (e.handover) { console.log('[dropbox sync] stopped: a newer instance took over'); return { stopped: 'handover' }; }
     console.error('[dropbox sync]', e.message);
-    await notifyOwner(`Setter bot: Dropbox sync failed (${e.message}). Answers use the last good copy.`);
+    // a system hiccup, not something Pierce must act on at once: text only on the 2nd failure in a row, max every 6h
+    syncFailures++;
+    const last = await db.getSetting('dropbox_alerted_at');
+    if (syncFailures >= 2 && (!last || +now() - +new Date(last) > 6 * 3600e3)) {
+      await db.setSetting('dropbox_alerted_at', now().toISOString());
+      await notifyOwner(`Dropbox sync has failed ${syncFailures} times in a row (${e.message.slice(0, 120)}). Buyers still get answers from the last good copy. Tell Claude Code.`);
+    }
     return { error: e.message };
   } finally { syncing = false; }
 }
@@ -169,6 +177,7 @@ export function startJobs() {
   // when this instance takes the lease (at boot, or later after the old one hands over): register the RingCentral
   // webhook for THIS config and refresh listings
   keeper.onBecomeLeader(() => { renewSubscription(); syncListings(); });
+  setSyncGuard(() => keeper.isLeader());
   timers.push(setInterval(renewLease, 15 * 1000));
   renewLease();
   every(briefTick, 60 * 1000);

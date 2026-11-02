@@ -455,3 +455,20 @@ test('deploy handover: the newest instance takes the job loops from the old one 
   setNow(day(0, 0.05)); // the new one stops heartbeating (crashed): after 60s the old one resumes
   assert.equal(await old.renew(), true);
 });
+
+test('Dropbox mirror: re-reading a file (or two instances reading it) replaces the row instead of a duplicate-key crash', async () => {
+  const a = await db.insertDocument({ listing_id: 1, filename: 'OM.pdf', tier: 'ca', status: 'failed', dropbox_id: 'same' });
+  const b = await db.insertDocument({ listing_id: 1, filename: 'OM.pdf', tier: 'ca', status: 'processed', dropbox_id: 'same' });
+  const docs = (await db.listDocuments(1)).filter((d) => d.dropbox_id === 'same');
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].id, b.id); assert.notEqual(a.id, b.id);
+  assert.equal(docs[0].status, 'processed');
+});
+
+test('a sync stops between files when this instance is no longer the leader (no Pierce alert for that)', async () => {
+  const { setSyncGuard, syncDropbox } = await import('../src/docs/sync.js');
+  const { mockFs } = await import('../src/dropbox.js');
+  mockFs.files = [{ id: 'x1', path_display: '/Brokerage/01 - Brokerage/Deals/01 - Listed/Lighthouse Resort - Isleton, CA/Flyer.pdf', content_hash: 'h', buffer: Buffer.from('flyer') }];
+  setSyncGuard(() => false);
+  try { await assert.rejects(() => syncDropbox(), (e) => e.handover === true); } finally { setSyncGuard(() => true); }
+});

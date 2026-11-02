@@ -6,6 +6,12 @@ import { classifyFile, rules } from './classify.js';
 import { ingestFile } from './ingest.js';
 import { matchListing, mostRestrictive } from '../listings.js';
 
+// Set by jobs.js to "is this instance still the leader?". A long sync stops between files once a newer instance
+// takes over, so two instances never read the same files at once.
+let keepGoing = () => true;
+export const setSyncGuard = (fn) => { keepGoing = fn; };
+const checkGuard = () => { if (!keepGoing()) { const e = new Error('handed over to a newer instance'); e.handover = true; throw e; } };
+
 const baseName = (folder) => folder.replace(/\s+-\s+[^-]+,\s*[A-Z]{2}\s*$/, '').trim(); // "Lighthouse Resort - Isleton, CA" -> "Lighthouse Resort"
 const cityOf = (folder) => folder.match(/-\s+([^-]+,\s*[A-Z]{2})\s*$/)?.[1] || null;
 
@@ -15,6 +21,7 @@ export async function syncFolder(listingId, rootPath, { internal = false } = {})
   const seen = new Set();
   const out = { added: 0, updated: 0, unchanged: 0, skipped: 0, removed: 0, failed: 0 };
   for (const entry of entries) {
+    checkGuard();
     const rel = entry.path_display.slice(rootPath.length + 1);
     const cls = internal ? { tier: 'internal', doc_type: 'sop' } : classifyFile(rel, entry.size);
     if (!internal && cls.tier === 'exclude') { out.skipped++; continue; }
@@ -23,9 +30,10 @@ export async function syncFolder(listingId, rootPath, { internal = false } = {})
     const prev = existing.get(entry.id);
     // unchanged = same bytes, same tier, and read successfully; a failed read is retried on the next sync
     if (prev && prev.content_hash === entry.content_hash && prev.tier === cls.tier && prev.status !== 'failed') { out.unchanged++; continue; }
-    if (prev) await db.deleteDocument(prev.id);
-    const doc = await ingestFile({ listingId, entry, buffer: await download(entry.id), cls });
-    if (doc.status === 'failed') out.failed++; else if (prev) out.updated++; else out.added++;
+    try {
+      const doc = await ingestFile({ listingId, entry, buffer: await download(entry.id), cls });
+      if (doc.status === 'failed') out.failed++; else if (prev) out.updated++; else out.added++;
+    } catch (e) { out.failed++; console.error('[dropbox sync] file', entry.path_display, e.message); } // next file
   }
   for (const [id, d] of existing) if (!seen.has(id)) { await db.deleteDocument(d.id); out.removed++; }
   return out;
@@ -64,6 +72,7 @@ export async function syncDropbox() {
   }
 
   for (const f of await subfolders(rules.listings_root)) {
+    checkGuard();
     let listing = await listingForFolder(f, await db.listListings());
     if (!listing) {
       listing = await listingFromFolder(f, 'active');

@@ -108,7 +108,12 @@ export const db = {
     const q = sb().from('documents').select('id,listing_id,filename,doc_type,tier,dropbox_id,dropbox_path,content_hash,status,summary,extracted');
     return one(listingId === null ? q.is('listing_id', null) : q.eq('listing_id', listingId));
   },
-  insertDocument: (d) => one(sb().from('documents').insert(d).select().single()),
+  // the bot's own mirror of a Dropbox file: replace any earlier row for the same file (chunks/units cascade), so a
+  // re-read or a concurrent read can never hit the unique dropbox_id constraint
+  async insertDocument(d) {
+    if (d.dropbox_id) await one(sb().from('documents').delete().eq('dropbox_id', d.dropbox_id));
+    return one(sb().from('documents').insert(d).select().single());
+  },
   getDocument: (id) => one(sb().from('documents').select('*').eq('id', id).maybeSingle()),
   deleteDocument: (id) => one(sb().from('documents').delete().eq('id', id)),
   async insertChunks(rows) { if (rows.length) await one(sb().from('doc_chunks').insert(rows)); },

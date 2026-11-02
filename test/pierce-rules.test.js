@@ -78,7 +78,9 @@ test('first contact: email with links at 1-2 min, then a text 4-6 min later poin
 
 test('no message ever says STOP, opt out, AI or assistant; STOP still opts out in code', async () => {
   await ingestEmail(lead());
-  for (const t of [...mockOutbox.map((x) => x.text), ...mockMailbox.map((x) => x.text)]) assert.ok(!/STOP|opt.?out|\bAI\b|assistant|bot\b/i.test(t), t);
+  // what BUYERS receive (alerts to Pierce are labeled "[CRI bot]" and never go to buyers)
+  for (const t of [...mockOutbox.filter((x) => x.to !== config.owner.phone).map((x) => x.text), ...mockMailbox.map((x) => x.text)]) assert.ok(!/STOP|opt.?out|\bAI\b|assistant|bot\b/i.test(t), t);
+  assert.ok(mockOutbox.filter((x) => x.to === config.owner.phone).every((x) => x.text.startsWith('[CRI bot] ')), 'every alert to Pierce is labeled');
   await sms('+15305550101', 'STOP');
   assert.ok(await db.isOptedOut('+15305550101'));
 });

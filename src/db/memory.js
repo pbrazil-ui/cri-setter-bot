@@ -65,7 +65,10 @@ export const db = {
   async updateListing(id, patch) { const l = t.listings.find((x) => x.id === id); Object.assign(l, patch); return clone(l); },
 
   async listDocuments(listingId) { return t.documents.filter((d) => (d.listing_id ?? null) === listingId).map(clone); },
-  async insertDocument(d) { const row = { id: seq++, created_at: ts(), ...d }; t.documents.push(row); return clone(row); },
+  async insertDocument(d) {
+    if (d.dropbox_id) for (const old of t.documents.filter((x) => x.dropbox_id === d.dropbox_id)) await db.deleteDocument(old.id);
+    const row = { id: seq++, created_at: ts(), ...d }; t.documents.push(row); return clone(row);
+  },
   async getDocument(id) { return clone(t.documents.find((d) => d.id === id)); },
   async deleteDocument(id) { t.documents = t.documents.filter((d) => d.id !== id); t.chunks = t.chunks.filter((c) => c.document_id !== id); t.units = t.units.filter((u) => u.document_id !== id); },
   async insertChunks(rows) { rows.forEach((r) => t.chunks.push({ id: seq++, ...r })); },

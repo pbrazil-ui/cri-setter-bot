@@ -286,7 +286,8 @@ export const syncListingsFromHubSpot = safe(async () => {
       await db.upsertListing({
         hubspot_deal_id: d.id, listing_code: p.listing_code || null, name: p.dealname, // no code -> buyer deals key on hubspot_deal_id
         status, owner_id: String(p.hubspot_owner_id),
-        crexi_url: p.crexi_listing_url || null, ca_link: p.ca_link || null, hub_url: p.listing_hub_url || null,
+        // HubSpot wins when it has a value; a link set by hand in the bot's DB is kept while HubSpot's field is blank
+        crexi_url: p.crexi_listing_url || prev?.crexi_url || null, ca_link: p.ca_link || prev?.ca_link || null, hub_url: p.listing_hub_url || prev?.hub_url || null,
       });
       count++;
     }
