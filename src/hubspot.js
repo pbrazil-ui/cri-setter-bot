@@ -2,7 +2,7 @@
 // Every function is a no-op when HUBSPOT_TOKEN is not set. Failures are logged, never thrown,
 // so a HubSpot outage never stops a lead from getting a text back.
 import { config } from './config.js';
-import { mostRestrictive } from './listings.js';
+import { mostRestrictive, publicListingName } from './listings.js';
 import { db } from './db/index.js';
 import { now } from './clock.js';
 import { notifyOwner } from './notify.js';
@@ -49,6 +49,8 @@ const safe = (fn) => async (...args) => {
 // ---------- stage logic (pure, unit-tested) ----------
 const RANK = { [S.newBuyer]: 0, [S.qualified]: 1, [S.offerOut]: 2, [S.underContract]: 3, [S.won]: 4, [S.lost]: -1 };
 const HUMAN_STAGES = new Set([S.offerOut, S.underContract, S.won]);
+// field writes (e.g. Next step) also stay off Closed Lost deals; stage moves follow decideStageMove
+const NO_FIELD_WRITES = new Set([...HUMAN_STAGES, S.lost]);
 
 const dealIdFor = async (lead) => {
   const listing = lead.listing_id ? await db.getListing(lead.listing_id) : null;
@@ -85,7 +87,12 @@ export const createTask = safe(skipTest(async (leadId, { key, subject, body, due
 export const setNextStep = safe(skipTest(async (leadId, text) => {
   const lead = await db.getLead(leadId);
   const dealId = lead && (await dealIdFor(lead));
-  if (dealId) await api('PATCH', `/crm/v3/objects/deals/${dealId}`, { properties: { hs_next_step: text.slice(0, 250) } });
+  if (dealId) {
+    // non-negotiable 8: never write to a deal at/after Offer Out, or a closed one
+    const stage = (await api('GET', `/crm/v3/objects/deals/${dealId}?properties=dealstage`))?.properties?.dealstage;
+    if (NO_FIELD_WRITES.has(stage)) { hubspotLog.push({ op: 'next_step_skipped', leadId, dealId, stage }); return false; }
+    await api('PATCH', `/crm/v3/objects/deals/${dealId}`, { properties: { hs_next_step: text.slice(0, 250) } });
+  }
   hubspotLog.push({ op: 'next_step', leadId, text });
   return true;
 }));
@@ -176,10 +183,19 @@ export const upsertContact = safe(skipTest(async (lead) => {
 // ---------- buyer deals ----------
 const dealKey = (lead, listing) => listing?.listing_code || listing?.hubspot_deal_id || lead.property_name || 'general';
 
+// concurrent calls for one buyer + listing (intake, the first-touch pass, a status sync) share one lookup/create:
+// one buyer deal, never two
+const dealInFlight = new Map();
 export const ensureBuyerDeal = safe(skipTest(async (lead, listing) => {
   if (!hs.createDeals) return null;
+  const k = `${lead.id}|${dealKey(lead, listing)}`;
+  if (!dealInFlight.has(k)) dealInFlight.set(k, ensureBuyerDealOnce(lead, listing).finally(() => dealInFlight.delete(k)));
+  return dealInFlight.get(k);
+}));
+
+async function ensureBuyerDealOnce(lead, listing) {
   const key = dealKey(lead, listing);
-  const existing = lead.hubspot_deals?.[key];
+  const existing = (await db.getLead(lead.id))?.hubspot_deals?.[key] || lead.hubspot_deals?.[key]; // the caller's copy may be stale
   if (existing) return existing;
   const contactId = await upsertContact(lead);
   if (!contactId) return null;
@@ -190,8 +206,12 @@ export const ensureBuyerDeal = safe(skipTest(async (lead, listing) => {
     { propertyName: 'associations.contact', operator: 'EQ', value: contactId },
   ];
   if (listing?.listing_code) filters.push({ propertyName: 'listing_code', operator: 'EQ', value: listing.listing_code });
-  const found = await api('POST', '/crm/v3/objects/deals/search', { filterGroups: [{ filters }], properties: ['dealname', 'dealstage'], limit: 1 });
-  let dealId = found?.results?.[0]?.id;
+  const found = await api('POST', '/crm/v3/objects/deals/search', { filterGroups: [{ filters }], properties: ['dealname', 'dealstage'], limit: listing?.listing_code ? 1 : 20 });
+  // with a listing_code the search is already per listing; without one, only a deal NAMED for this property is reused
+  // (never the buyer's deal for a different park)
+  const names = [listing?.name, listing && publicListingName(listing.name), lead.property_name].filter(Boolean).map((n) => n.toLowerCase().trim());
+  const forThisListing = (d) => listing?.listing_code || (names.length && names.some((n) => String(d.properties?.dealname || '').toLowerCase().includes(n)));
+  let dealId = (found?.results || []).find(forThisListing)?.id;
 
   if (!dealId) {
     const who = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.company || lead.phone || lead.email;
@@ -213,7 +233,7 @@ export const ensureBuyerDeal = safe(skipTest(async (lead, listing) => {
   const fresh = await db.getLead(lead.id);
   await db.updateLead(lead.id, { hubspot_deals: { ...(fresh.hubspot_deals || {}), [key]: dealId } });
   return dealId;
-}));
+}
 
 /** Call after any lead status change. Moves the buyer deal per decideStageMove. */
 export const syncDealStage = safe(skipTest(async (leadId) => {

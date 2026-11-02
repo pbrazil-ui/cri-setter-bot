@@ -132,7 +132,7 @@ export async function sendViaEmail(lead, text, kind, onSend = {}, attachments = 
 }
 
 /** Send immediately (guardrails already passed or Pierce approved). */
-export async function sendNow(lead, text, kind, onSend = {}, attachments = [], channel) {
+export async function sendNow(lead, text, kind, onSend = {}, attachments = [], channel, { quietFail = false } = {}) {
   if (viaEmail(lead, channel)) return sendViaEmail(lead, text, kind, onSend, attachments);
   if (await db.isOptedOut(lead.phone)) return { skipped: 'opted_out' };
   const body = cleanSms(text);
@@ -145,7 +145,7 @@ export async function sendNow(lead, text, kind, onSend = {}, attachments = [], c
     return { sent: true, lead: updated };
   } catch (e) {
     await db.insertMessage({ lead_id: lead.id, direction: 'out', body, status: 'failed', kind, meta: { error: e.message } });
-    await notifyOwner(`Send FAILED to ${leadLabel(lead)}: ${e.message}`);
+    if (!quietFail) await notifyOwner(`Send FAILED to ${leadLabel(lead)}: ${e.message}`); // quietFail: the caller tells Pierce (once)
     return { failed: true, error: e.message };
   }
 }
@@ -160,7 +160,7 @@ export async function scheduleSend(lead, text, kind, onSend = {}, { delaySec = 0
  * The single gate every bot-written message passes through.
  * Order: opt-out -> per-lead rate limit -> policy (auto / approve / block) -> time window -> send.
  */
-export async function deliver(lead, text, { kind, forceApproval = false, reason, onSend = {}, attachments = [], flags = {}, decision = {}, human = false, channel, pace = false }) {
+export async function deliver(lead, text, { kind, forceApproval = false, reason, onSend = {}, attachments = [], flags = {}, decision = {}, human = false, channel, pace = false, quietFail = false }) {
   const email = viaEmail(lead, channel);
   if (!text || !String(text).trim()) return { skipped: 'empty' };
   if (lead.phone && (await db.isOptedOut(lead.phone))) return { skipped: 'opted_out' };
@@ -235,7 +235,7 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
       return s;
     }
   }
-  const r = await sendNow(lead, text, kind, onSend, attachments, email ? 'email' : 'sms');
+  const r = await sendNow(lead, text, kind, onSend, attachments, email ? 'email' : 'sms', { quietFail });
   if (r.sent || r.draft) await audit(r.sent ? 'sent' : 'drafted', { leadId: lead.id, detail: { kind, policy: key, chars: text.length, attachments: attachments.map((d) => d.filename) } });
   return r;
 }
@@ -251,32 +251,95 @@ export async function sendIntroEmail(lead, listing, { onSend = {} } = {}) {
   return r;
 }
 
+/** RingCentral refused the number itself (landline, not SMS-capable, invalid): retrying will never work. */
+export const smsUndeliverable = (err) => /landline|not\s+(?:sms|text)[- ]?(?:capable|enabled)|can(?:no|')t\s+receive\s+(?:sms|text)|not\s+a\s+(?:mobile|wireless|cell)|invalid\s+(?:"?to"?\s+|recipient\s+|destination\s+)?phone\s*number|InvalidPhoneNumber|MSG-24[06]\b/i.test(String(err || ''));
+
+const FIRST_TOUCH_MAX_TRIES = 3;
+const DAY_MS = 864e5;
+/**
+ * The first message didn't go (failed / blocked / skipped): park the lead instead of retrying every 20s.
+ * Number can't take texts -> wrong_number. Otherwise retry in 24h, up to 3 tries, then no_response.
+ * An emergency stop is not the lead's fault: park without using up a try. Pierce hears once per lead per failure type.
+ */
+async function parkFirstTouch(lead, r, step) {
+  const type = r.failed ? 'failed' : r.blocked ? 'blocked' : 'skipped';
+  const why = r.error || r.blocked || r.skipped || type;
+  const state = { count: 0, notified: [], ...(lead.raw?.first_touch_retry || {}) };
+  const tell = async (msg) => {
+    if (state.notified.includes(type)) return;
+    state.notified = [...state.notified, type];
+    await notifyOwner(msg);
+  };
+  await audit('first_touch_parked', { leadId: lead.id, detail: { step, type, why } });
+  if (step === 'sms' && r.skipped === 'opted_out') { await setStatus(lead, 'opted_out'); return { ...r, parked: 'opted_out' }; }
+  if (step === 'sms' && r.failed && smsUndeliverable(r.error)) {
+    await tell(`First text to ${leadLabel(lead)} FAILED: ${lead.phone} can't receive texts (${why}). Marked wrong number; reach them another way.`);
+    lead = await db.updateLead(lead.id, { raw: { ...(lead.raw || {}), first_touch_retry: state } });
+    await setStatus(lead, 'wrong_number');
+    await hubspot.addNote(lead.id, `First text failed: number can't receive SMS (${why}).`);
+    await syncNextStep(lead.id);
+    return { ...r, parked: 'wrong_number' };
+  }
+  const counts = r.blocked !== 'emergency_stop';
+  if (counts) state.count += 1;
+  const what = step === 'sms' ? 'First text' : 'First email';
+  if (counts && state.count >= FIRST_TOUCH_MAX_TRIES) {
+    await tell(`${what} to ${leadLabel(lead)} didn't go out (${type}: ${why}). Closed after ${state.count} tries.`);
+    lead = await db.updateLead(lead.id, { raw: { ...(lead.raw || {}), first_touch_retry: state } });
+    await setStatus(lead, 'no_response');
+    await hubspot.addNote(lead.id, `${what} could not be sent after ${state.count} tries (${type}: ${why}). Closed by setter bot.`);
+    await syncNextStep(lead.id);
+    return { ...r, parked: 'gave_up' };
+  }
+  await tell(`${what} to ${leadLabel(lead)} didn't go out (${type}: ${why}). ${counts ? `Retrying once a day, up to ${FIRST_TOUCH_MAX_TRIES} tries, then closing it.` : 'Holding it while the emergency stop is on.'}`);
+  const at = new Date(+now() + DAY_MS).toISOString();
+  await db.updateLead(lead.id, { next_action_at: at, raw: { ...(lead.raw || {}), first_touch_retry: state } });
+  return { ...r, parked: 'retry', at };
+}
+const notSent = (r) => !!(r.failed || r.blocked || r.skipped);
+const introOutcome = (r) => (r.sent ? 'sent' : r.draft ? 'drafted in Outlook, not sent yet' : r.approval ? 'waiting on Pierce' : `not sent (${r.failed ? 'failed' : r.blocked ? `blocked: ${r.blocked}` : `skipped: ${r.skipped}`})`);
+
 /**
  * Pierce's sequence: 1-2 min after the inquiry, the email (any hour); ~5 min later, the text (send window only).
  * Leads with only one channel get just that one. Called by the fast job loop and right after intake.
  */
+const firstTouchInFlight = new Set();
 export async function processFirstTouch(lead) {
+  // one claim per lead for every caller (job passes, intake, TEST): never two first texts / two deals for one lead.
+  // Re-read after claiming so a caller holding a stale copy sees what an earlier run already sent.
+  if (firstTouchInFlight.has(lead.id)) return { skipped: 'in_progress' };
+  firstTouchInFlight.add(lead.id);
+  try { return await firstTouchStep((await db.getLead(lead.id)) || lead); } finally { firstTouchInFlight.delete(lead.id); }
+}
+
+async function firstTouchStep(lead) {
   if (!['new', 'no_phone'].includes(lead.status)) return { skipped: 'not_new' };
   const emailOn = !!lead.email && config.email.mode !== 'off';
-  if (!lead.phone && !emailOn) return { skipped: 'no_channel' };
+  if (!lead.phone && !emailOn) {
+    // email-only lead while email is off: park it so it can't hold up newer leads; picked up once email is on
+    if (!lead.next_action_at || new Date(lead.next_action_at) <= now()) await db.updateLead(lead.id, { next_action_at: new Date(+now() + DAY_MS).toISOString() });
+    return { skipped: 'no_channel' };
+  }
   if (lead.next_action_at && new Date(lead.next_action_at) > now()) return { deferred: 'pacing', at: lead.next_action_at };
   if (!lead.phone) lead = await db.updateLead(lead.id, { preferred_channel: 'email' });
   if (lead.phone && (await db.isOptedOut(lead.phone))) { await setStatus(lead, 'opted_out'); return { skipped: 'opted_out' }; }
   const listing = await getListing(lead);
 
-  // step 1: email
-  if (emailOn && !lead.first_email_at) {
+  // step 1: email. first_email_at only when it really went to the buyer; raw.intro_email records what happened.
+  if (emailOn && !lead.first_email_at && !lead.raw?.intro_email) {
     const r = await sendIntroEmail(lead, listing, { onSend: lead.phone ? {} : { status: 'contacted' } });
     if (r.deferred) { await db.updateLead(lead.id, { next_action_at: new Date(+now() + 30 * 60e3).toISOString() }); return { email: r }; }
+    if (!lead.phone && notSent(r)) return parkFirstTouch(lead, r, 'email');
+    const outcome = { raw: { ...(lead.raw || {}), intro_email: introOutcome(r) }, ...(r.sent ? { first_email_at: iso() } : {}) };
     if (!lead.phone) {
-      if (r.approval) await db.updateLead(lead.id, { status: 'awaiting_approval', first_email_at: iso() });
-      else await db.updateLead(lead.id, { first_email_at: iso(), ...(r.sent || r.draft ? { status: 'contacted' } : {}) });
+      if (r.approval) await db.updateLead(lead.id, { status: 'awaiting_approval', ...outcome });
+      else await db.updateLead(lead.id, { ...outcome, ...(r.sent || r.draft ? { status: 'contacted' } : {}) });
       return r;
     }
     const wait = randSec(config.textAfterEmail);
-    lead = await db.updateLead(lead.id, { first_email_at: iso(), next_action_at: new Date(+now() + wait * 1000).toISOString() });
+    lead = await db.updateLead(lead.id, { ...outcome, next_action_at: new Date(+now() + wait * 1000).toISOString() });
     if (wait > 0) return { email: r, text: { deferred: 'after_email', at: lead.next_action_at } };
-    return { ...(await processFirstTouch(lead)), email: r };
+    return { ...(await firstTouchStep(lead)), email: r };
   }
 
   // step 2: text
@@ -286,10 +349,13 @@ export async function processFirstTouch(lead) {
     return { deferred: 'outside_window' };
   }
   await hubspot.ensureBuyerDeal(lead, listing);
+  // "Just sent you an email" only when the email really went out (a draft or a held email has not reached them)
   const text = firstTouchText(lead, listing, { channel: 'sms', afterEmail: !!lead.first_email_at });
-  const r = await deliver(lead, text, { kind: 'first_touch', channel: 'sms', onSend: { status: 'contacted' } });
+  const r = await deliver(lead, text, { kind: 'first_touch', channel: 'sms', onSend: { status: 'contacted' }, quietFail: true });
   if (r.approval) await db.updateLead(lead.id, { status: 'awaiting_approval' });
   else if (r.deferred) await db.updateLead(lead.id, { next_action_at: new Date(+now() + 30 * 60e3).toISOString() });
+  else if (r.scheduled) await db.updateLead(lead.id, { next_action_at: new Date(+new Date(r.scheduled) + 30 * 60e3).toISOString() }); // the queued text sets 'contacted'
+  else if (notSent(r)) return parkFirstTouch(lead, r, 'sms');
   if (r.sent) await hubspot.addNote(lead.id, `First text sent: "${text}"`);
   await syncNextStep(lead.id);
   return r;
@@ -437,14 +503,38 @@ export async function respondNow(lead) {
 export async function answerOwnerQuestion(id, answer) {
   const q = await db.getOwnerQuestion(id);
   if (!q || q.status !== 'open') return { error: 'not_open' };
+  const lead = await db.getLead(q.lead_id);
+  // word it first: if that fails, Q stays open and nothing is saved, so his A# can simply be sent again
+  let text;
+  try { text = await polishAnswer({ lead, question: q.question, answer }); } catch (e) {
+    await audit('answer_failed', { leadId: lead.id, actor: 'system', detail: { question: id, error: e.message } });
+    await notifyOwner(`Your A${id} didn't go out (${e.message}). Q${id} is still open: text A${id} again, or reply to ${leadLabel(lead)} yourself.`);
+    return { error: 'polish_failed' };
+  }
   await db.updateOwnerQuestion(id, { status: 'answered', answer, answered_at: iso() });
   await db.addQa({ listing_id: q.listing_id ?? null, question: q.question, answer });
-  const lead = await db.getLead(q.lead_id);
-  const text = await polishAnswer({ lead, question: q.question, answer });
   await audit('answered', { leadId: lead.id, actor: 'pierce', detail: { question: id, answer } });
   const r = await deliver(lead, text, { kind: 'answer', pace: true });
   await hubspot.addNote(lead.id, `Pierce answered "${q.question}": ${answer}`);
   return { lead, ...r };
+}
+
+const TOPIC_STOP = new Set('the a an of and or to in on for is are was were be it this that with what how many much does do any there their at by from as you your can could would will has have had about just also please every each all buyer buyers ask asks asked asking wants want know question pierce'.split(' '));
+const stem = (w) => (w.length > 4 ? w.replace(/(ing|ed|ly)$/, '') : w).replace(/(x|sh|ch|ss)es$/, '$1').replace(/([^s])s$/, '$1');
+const topicWords = (s, ignore = new Set()) => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9$%\s]/g, ' ').split(/\s+/)
+  .filter((w) => w.length > 1 && !TOPIC_STOP.has(w) && !ignore.has(w)).map(stem).filter((w) => !ignore.has(w)));
+/**
+ * Same question in other words (non-negotiable 7 dedupe). Strict on purpose: boilerplate ("buyer asks"), the listing's
+ * and the lead's names are dropped, then the two word sets must nearly coincide (Jaccard over the union >= 0.8).
+ * Water vs sewer, "how many RV sites" vs "do the RV sites have hookups" are different questions. When in doubt: new Q#.
+ */
+const normQ = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+export function sameTopic(a, b, ignoreText = []) {
+  const ignore = new Set([].concat(ignoreText).join(' ').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).flatMap((w) => [w, stem(w)]));
+  const A = topicWords(a, ignore); const B = topicWords(b, ignore);
+  if (!A.size || !B.size) return false;
+  const both = [...A].filter((w) => B.has(w)).length;
+  return both / (A.size + B.size - both) >= 0.8;
 }
 
 export async function applyDecision(lead, d, { inboundText = '', kind = 'reply', flags = {}, channel } = {}) {
@@ -483,7 +573,20 @@ export async function applyDecision(lead, d, { inboundText = '', kind = 'reply',
   if (qualification.exchange_deadline && !lead.hubspot_tasks?.['1031']) await callTask(lead, { key: '1031', why: `1031 clock: ${qualification.exchange_deadline}`, hot: true, talkingPoints: d.call_talking_points });
 
   if (d.action === 'ask_pierce') {
+    // non-negotiable 7: one open question (and one holding reply) per topic. The same question again waits on the open Q#.
+    // Only the same listing's open questions count, and names/boilerplate don't make two questions "the same".
+    const asked = d.question_for_pierce || inboundText;
     const listing = await getListing(lead);
+    const names = [listing?.name, lead.property_name, lead.first_name, lead.last_name].filter(Boolean);
+    const dup = (await db.listOpenOwnerQuestions(lead.id))
+      .find((q) => (q.listing_id ?? null) === (lead.listing_id ?? null) && sameTopic(q.question, asked, names));
+    if (dup) {
+      await audit('ask_pierce_deduped', { leadId: lead.id, detail: { question: dup.id, text: asked } });
+      // never lose the buyer's wording: if it differs from the open Q, Pierce sees it (no new Q#, no second holding reply)
+      if (normQ(asked) !== normQ(dup.question)) await notifyOwner(`Asked again (Q${dup.id}) ${leadLabel(lead)}: "${asked}"\nNo second holding reply sent. A${dup.id} answers both.`);
+      await syncNextStep(lead.id);
+      return { action: 'ask_pierce', deduped: dup.id };
+    }
     const q = await db.createOwnerQuestion({ lead_id: lead.id, listing_id: lead.listing_id ?? null, question: d.question_for_pierce || inboundText });
     await audit('asked_pierce', { leadId: lead.id, detail: { question: q.id, text: q.question } });
     await notifyOwner([
@@ -666,9 +769,12 @@ export async function runFollowups() {
     }
     if (plan.done) {
       if (hoursSince(lead.last_outbound_at) < 48) continue;
-      const canNurture = lead.status !== 'nurture' && ((lead.email && config.email.mode !== 'off') || (config.nurture.sms && lead.phone));
-      await setStatus(lead, canNurture ? 'nurture' : 'no_response');
-      await hubspot.addNote(lead.id, canNurture ? 'No reply after day 7. Moved to the long-term list: listing emails every 2 weeks to 3 months, then monthly, until they reply or opt out.' : 'No reply after full follow-up cadence. Closed out by setter bot.');
+      // email not connected yet: a lead WITH an email stays on the long-term list and gets emailed once email is on
+      const emailLater = !!lead.email && config.email.mode === 'off';
+      if (lead.status === 'nurture' && emailLater) continue;
+      const canNurture = lead.status !== 'nurture' && (!!lead.email || (config.nurture.sms && lead.phone));
+      await setStatus(lead, canNurture ? 'nurture' : 'no_response', canNurture ? { next_action_at: new Date(+now() + config.nurture.everyDays * DAY).toISOString() } : {});
+      await hubspot.addNote(lead.id, canNurture ? `No reply after day 7. Moved to the long-term list: listing emails every 2 weeks to 3 months, then monthly, until they reply or opt out.${emailLater ? ' Emails start once email is connected.' : ''}` : 'No reply after full follow-up cadence. Closed out by setter bot.');
       await syncNextStep(lead.id);
       results.push({ id: lead.id, [canNurture ? 'nurture' : 'closed']: true });
       continue;
@@ -688,7 +794,10 @@ export async function runFollowups() {
       });
     } catch (e) { console.error('[followup]', e.message); continue; }
     if (!d.reply_text?.trim() || d.action === 'no_reply') continue;
-    const r = await deliver(lead, d.reply_text, { kind: 'followup', channel: plan.channel });
+    const r = await deliver(lead, d.reply_text, {
+      kind: 'followup', channel: plan.channel, flags: ctx.flags, attachments: ctx.flags.needsAttachment || [],
+      reason: ctx.flags.usedSensitive ? 'follow-up uses sensitive docs or past correspondence' : undefined,
+    });
     if (r.sent || r.scheduled || r.draft) await db.updateLead(lead.id, { followup_count: n + 1, ...(r.draft || r.scheduled ? { last_outbound_at: iso() } : {}) });
     if (r.approval) await db.updateLead(lead.id, { followup_count: n + 1, last_outbound_at: iso() }); // don't re-draft every tick
     if (d.needs_call) await callTask(lead, { key: `call:${iso().slice(0, 10)}`, why: d.call_reason || 'a call is the right next step', hot: true, talkingPoints: d.call_talking_points });
@@ -707,6 +816,8 @@ export async function sendDueScheduled() {
 }
 
 async function sendDueScheduledOnce() {
+  // PAUSE and the emergency stop hold every queued text too: rows stay 'scheduled' and go once both are off
+  if (policies().emergency_stop || (await isPaused())) return { held: policies().emergency_stop ? 'emergency_stop' : 'paused' };
   const sentNow = new Set();
   for (const m of await db.listDueScheduled()) {
     const lead = await db.getLead(m.lead_id);

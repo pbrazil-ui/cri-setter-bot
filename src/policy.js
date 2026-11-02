@@ -22,7 +22,11 @@ export function classify({ kind, lead, flags = {}, decision = {}, human = false,
   const email = channel ? channel === 'email' : (lead.preferred_channel === 'email' || (!lead.phone && lead.email));
   // no match among Pierce's/Dylan's listings: could be another agent's lead, so Pierce decides (Nov 2 2026)
   if (kind === 'first_touch' && !lead.listing_id) return 'first_touch.unmatched';
+  // uploaded lists (TCPA, non-negotiable 10): the first email waits for Pierce's Y just like the first text
+  if (kind === 'first_touch' && lead.source === 'csv') return 'first_touch.csv';
   if (kind === 'first_touch') return email ? 'first_touch.email' : `first_touch.${lead.source || 'manual'}`;
+  // a follow-up drawn from sensitive docs or past correspondence gets the same gate as a reply
+  if (kind === 'followup' && flags.usedSensitive) return 'reply.sensitive_docs';
   if (kind === 'followup') return lead.status === 'in_dd' ? 'followup.in_dd' : 'followup.pre_ca';
   if (kind === 'answer') return 'answer.from_pierce';
   if (kind === 'approved' || kind === 'owner_edit') return null; // Pierce already decided

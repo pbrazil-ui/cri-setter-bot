@@ -44,10 +44,17 @@ async function reject(id) {
   if (!a || a.status !== 'pending') return notifyOwner(`#${id} isn't pending.`);
   await db.updateApproval(id, { status: 'rejected', resolved_at: now().toISOString() });
   await audit('rejected', { leadId: a.lead_id, actor: 'pierce', detail: { approval: id, policy: a.policy } });
-  const lead = await db.getLead(a.lead_id);
-  const emailStep = a.kind === 'first_touch' && a.on_send?._channel === 'email' && lead.phone; // the text still follows
-  if (lead.status === 'awaiting_approval' && !emailStep) await setStatus(lead, 'human'); // you passed on the first text; bot leaves them alone
+  await settleDeclinedApproval(a);
   return notifyOwner(`Skipped #${id}.`);
+}
+
+/** A draft Pierce passed on (N#) or let expire: a lead waiting on its first message is moved on, never left stuck. */
+export async function settleDeclinedApproval(a) {
+  const lead = a?.lead_id ? await db.getLead(a.lead_id) : null;
+  if (!lead) return null;
+  const emailStep = a.kind === 'first_touch' && a.on_send?._channel === 'email' && lead.phone; // the text still follows
+  if (lead.status === 'awaiting_approval' && !emailStep) return setStatus(lead, 'human'); // you passed on the first text; bot leaves them alone
+  return lead;
 }
 
 /** TEST <listing>: Pierce's own cell becomes a test buyer on that listing for 2 hours (no HubSpot, any hour). */
@@ -96,6 +103,7 @@ export async function handleOwnerCommand(raw) {
   if ((m = t.match(/^e\s*#?(\d+)\s+([\s\S]+)$/i))) return approve(Number(m[1]), m[2].trim());
   if ((m = t.match(/^a\s*q?(\d+)\s+([\s\S]+)$/i))) {
     const r = await answerOwnerQuestion(Number(m[1]), m[2].trim());
+    if (r.error === 'polish_failed') return null; // already told him it didn't go out
     if (r.error) return notifyOwner(`Q${m[1]} isn't open.`);
     return notifyOwner(r.sent ? `Answered Q${m[1]} and saved it.` : r.approval ? `Saved Q${m[1]}; reply is waiting on your Y${r.approval.id}.` : `Saved Q${m[1]}; reply ${r.scheduled ? 'queued for send hours' : 'not sent: ' + JSON.stringify(r)}.`);
   }

@@ -142,7 +142,7 @@ export const db = {
     const { count, error } = await sb().from('audit_log').select('id', { count: 'exact', head: true }).eq('event', 'sent').eq('actor', 'bot').gte('created_at', sinceIso);
     if (error) throw error; return count ?? 0;
   },
-  expireApprovals: (nowIso) => one(sb().from('approvals').update({ status: 'expired', resolved_at: nowIso }).eq('status', 'pending').lt('expires_at', nowIso).select('id,lead_id')),
+  expireApprovals: (nowIso) => one(sb().from('approvals').update({ status: 'expired', resolved_at: nowIso }).eq('status', 'pending').lt('expires_at', nowIso).select('id,lead_id,kind,on_send')),
   listLeadsUpdatedSince: (sinceIso) => one(sb().from('leads').select('*').gte('updated_at', sinceIso).limit(500)),
   listOpenOwnerQuestionsAll: () => one(sb().from('owner_questions').select('*').eq('status', 'open').order('created_at')),
 

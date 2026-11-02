@@ -11,6 +11,7 @@ import { importEmailHistory } from './docs/history.js';
 import { audit } from './policy.js';
 import { now } from './clock.js';
 import { pollInboxForLeads } from './intake/mailbox.js';
+import { settleDeclinedApproval } from './agent/owner.js';
 
 let running = false;
 
@@ -43,9 +44,18 @@ async function syncListings() {
   if (n !== null) console.log(`[listings] synced ${n} from HubSpot`);
 }
 
-/** New inquiries whose 1-2 min (email) or +5 min (text) mark has come due. Emails go any hour; texts wait for the send window. */
+/**
+ * New inquiries whose 1-2 min (email) or +5 min (text) mark has come due. Emails go any hour; texts wait for the send window.
+ * tick() and firstTouchTick() both call this: one shared guard, so two passes never text (or open a deal for) the same lead.
+ */
+let touching = false;
 async function firstTouchPass() {
-  for (const lead of await db.listLeadsForFirstTouch(config.firstTouchPerTick)) await processFirstTouch(lead);
+  if (touching) return { skipped: 'already_running' };
+  touching = true;
+  try {
+    for (const lead of await db.listLeadsForFirstTouch(config.firstTouchPerTick)) await processFirstTouch(lead);
+    return { ok: true };
+  } finally { touching = false; }
 }
 
 let polling = false;
@@ -59,11 +69,8 @@ export async function inboxTick() {
   } finally { polling = false; }
 }
 
-let touching = false;
 export async function firstTouchTick() {
-  if (touching) return;
-  touching = true;
-  try { await firstTouchPass(); } catch (e) { console.error('[firstTouchTick]', e); } finally { touching = false; }
+  try { return await firstTouchPass(); } catch (e) { console.error('[firstTouchTick]', e); return { error: e.message }; }
 }
 
 let replying = false;
@@ -115,7 +122,10 @@ export async function briefTick() {
 /** Approvals older than policies.limits.approval_expires_hours are expired so stale drafts never go out. */
 export async function expireTick() {
   const hit = await db.expireApprovals(now().toISOString());
-  for (const a of hit || []) await audit('approval_expired', { leadId: a.lead_id, actor: 'system', detail: { approval: a.id } });
+  for (const a of hit || []) {
+    await audit('approval_expired', { leadId: a.lead_id, actor: 'system', detail: { approval: a.id } });
+    await settleDeclinedApproval(a); // an expired first-touch approval moves the lead on, like N# does
+  }
   return hit?.length || 0;
 }
 

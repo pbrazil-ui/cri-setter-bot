@@ -6,6 +6,7 @@ import { matchListing } from '../listings.js';
 import { notifyOwner, leadLabel } from '../notify.js';
 import * as hubspot from '../hubspot.js';
 import { publicListingName } from '../listings.js';
+import { audit } from '../policy.js';
 
 const ACTIVE = ['contacted', 'engaged', 'qualified', 'booked', 'escalated', 'human', 'awaiting_approval'];
 
@@ -36,11 +37,22 @@ export async function upsertIncomingLead(data, source, { quiet = false } = {}) {
     const sameProperty = (base.listing_id && lead.listing_id === base.listing_id) || (!base.listing_id && lead.property_name === base.property_name) || !base.property_name;
     const patch = Object.fromEntries(Object.entries(base).filter(([k, v]) => v && !lead[k]));
     if (!sameProperty) Object.assign(patch, { property_name: base.property_name, listing_id: base.listing_id, listing_code: base.listing_code, inquiry: base.inquiry });
+    // a CA covers one listing: a verified buyer of A who inquires on B is not verified for B (Pierce sends CA# again)
+    const caReset = !sameProperty && lead.ca_verified;
+    if (caReset) patch.ca_verified = false;
+    const prevProperty = lead.property_name;
     const reopen = !sameProperty && ['disqualified', 'no_response'].includes(lead.status) && lead.phone;
-    if (reopen) Object.assign(patch, { status: 'new', followup_count: 0, next_action_at: now().toISOString() });
+    if (reopen) {
+      // first touch restarts for the new listing: forget the old listing's intro email so the new one goes out
+      // and the text only says "just sent you an email" if that one really did
+      const { intro_email: _ie, first_touch_retry: _ftr, ...raw } = lead.raw || {};
+      Object.assign(patch, { status: 'new', followup_count: 0, next_action_at: now().toISOString(), first_email_at: null, raw });
+    }
     if (Object.keys(patch).length) lead = await db.updateLead(lead.id, patch);
+    if (caReset) await audit('ca_reset', { leadId: lead.id, actor: 'system', detail: { from: prevProperty, to: base.property_name } });
     if (!sameProperty) {
       if (!quiet) await hubspot.ensureBuyerDeal(lead, listing);
+      if (caReset && !quiet) await hubspot.addNote(lead.id, `CA on file covered ${prevProperty || 'a different listing'}, not ${base.property_name || 'this one'}. Confidential docs locked until Pierce verifies a CA for this listing.`);
       if (!quiet && ACTIVE.includes(lead.status)) await notifyOwner(`${leadLabel(lead)} also inquired on ${base.property_name} (already in a thread).`);
     }
     if (!quiet) await hubspot.addNote(lead.id, `New inquiry${base.platform ? ` via ${base.platform}` : ''}: ${base.property_name || ''} ${base.inquiry || ''}`.trim());

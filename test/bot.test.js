@@ -161,7 +161,8 @@ test('quiet hours: first text waits for the morning window', async () => {
 });
 
 test('follow-up cadence: day 1, day 3, day 7, then closed as no_response', async () => {
-  await ingestEmail(crexiEmail());
+  // text-only lead (no email): nothing to keep for the long-term email list, so it closes
+  await ingestEmail(crexiEmail({ TextBody: crexiEmail().TextBody.replace('Email: jane@example.com\n', '') }));
   const count = () => mockOutbox.filter((m) => m.to === '+15305550101').length;
   setNow('2026-11-04T18:30:00Z'); await tick(); assert.equal(count(), 2);
   setNow('2026-11-05T18:30:00Z'); await tick(); assert.equal(count(), 2); // only 1 day since nudge

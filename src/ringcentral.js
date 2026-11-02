@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 
 export const mockOutbox = []; // used in SMS_MODE=mock and tests
+export const mockSmsFailures = new Map(); // SMS_MODE=mock only: phone -> error message the send throws (tests)
 
 const EVENT_FILTER = '/restapi/v1.0/account/~/extension/~/message-store/instant?type=SMS';
 let platformPromise = null;
@@ -18,6 +19,7 @@ async function platform() {
 
 export async function sendSms(to, text) {
   if (config.smsMode === 'mock') {
+    if (mockSmsFailures.has(to)) throw new Error(mockSmsFailures.get(to));
     const id = `mock-${mockOutbox.length + 1}`;
     mockOutbox.push({ id, to, text });
     if (process.env.NODE_ENV !== 'test') console.log(`[mock sms -> ${to}] ${text}`);

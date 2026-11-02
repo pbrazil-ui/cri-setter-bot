@@ -93,8 +93,9 @@ export async function extractDocument({ filename, docType, pdf, text }) {
 }
 
 /** Turn Pierce's quick answer into a reply to the lead, using only his facts. */
+export const mockLlm = { failPolish: false }; // LLM_MODE=mock only: tests make polishAnswer throw
 export async function polishAnswer({ lead, question, answer }) {
-  if (config.llmMode === 'mock') return `Confirmed: ${answer}`;
+  if (config.llmMode === 'mock') { if (mockLlm.failPolish) throw new Error('mock LLM failure'); return `Confirmed: ${answer}`; }
   const r = await callJson({
     model: config.anthropic.model, effort: 'low', maxTokens: 4000, what: 'polish answer',
     system: `Rewrite the broker's answer as a short, natural ${lead.preferred_channel === 'email' ? 'email reply (no signature)' : 'text message (under 300 characters)'} to the lead.${config.discloseAi ? '' : ' Write as the broker himself, first person.'} Use ONLY facts in the broker's answer. Don't add claims, numbers, or enthusiasm.`,
@@ -174,6 +175,10 @@ async function mockSetter({ lead, listing, messages, mode, executors, kb, openQu
     return { action: 'reply', reply_text: `That one is ${sold ? 'sold' : 'under contract'}, but I have other listings I can share. What are you looking for?`, summary: 'Off-market listing; asked criteria' };
   }
   if (mode === 'followup' && followup?.step === 'nurture') return { action: 'reply', reply_text: `Hi${lead.first_name ? ` ${lead.first_name}` : ''}, are you still looking for MH or RV parks?`, summary: 'nurture' };
+  if (mode === 'followup' && followup?.step === 'value_touch' && executors) {
+    const past = await executors.prior_conversations({ topic: 'seller financing' }); // the value touch may draw on history
+    if (past.results?.length) return { action: 'reply', reply_text: `Quick note on financing: ${past.results[0].excerpt.split('\n').pop().slice(0, 160)}`, summary: 'day 3 from history' };
+  }
   if (mode === 'followup' && followup?.step === 'still_looking') return { action: 'reply', reply_text: 'Still in the market for parks in NorCal?', summary: 'day 7' };
   if (mode !== 'followup' && /\b(call me|give me a call|hop on a call|can we talk|phone call)\b/.test(last)) return { action: 'reply', reply_text: "Happy to hop on a call. What's a good time for you today or tomorrow?", needs_call: true, call_reason: 'asked for a call', summary: 'Wants a call' };
   if (mode === 'followup') return { action: 'reply', reply_text: lead.status === 'in_dd' ? 'Had a chance to go through the numbers? Happy to walk through anything.' : 'Quick follow-up: still worth a short call this week?', summary: 'follow-up' };

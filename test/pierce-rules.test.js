@@ -38,7 +38,7 @@ const zeroTimers = () => Object.assign(config, {
 
 beforeEach(async () => {
   db._reset(); mockOutbox.length = 0; mockMailbox.length = 0; ownerLog.length = 0; mockFs.files = []; mockFs.links = {};
-  setNow(T0); zeroTimers();
+  setNow(T0); zeroTimers(); config.email.sendMode = 'draft';
   const l = await db.upsertListing({ hubspot_deal_id: 'h1', name: 'Lighthouse Resort', ca_link: 'https://example.com/ca', hub_url: 'https://cri.example/lighthouse', summary: '172 sites on the Delta in Isleton.' });
   await db.insertDocument({ listing_id: l.id, filename: 'Lighthouse Resort Flyer.pdf', tier: 'public', doc_type: 'om', status: 'processed', dropbox_id: 'fly1' });
   await db.insertDocument({ listing_id: l.id, filename: 'Offering Memorandum.pdf', tier: 'ca', doc_type: 'om', status: 'processed', dropbox_id: 'om1' });
@@ -47,6 +47,7 @@ beforeEach(async () => {
 });
 
 test('first contact: email with links at 1-2 min, then a text 4-6 min later pointing to it, in Pierce\'s voice', async () => {
+  config.email.sendMode = 'send'; // "Just sent you an email" only after a SENT email (a draft hasn't reached them)
   Object.assign(config, { firstTouchDelay: { minSec: 60, maxSec: 120 }, textAfterEmail: { minSec: 240, maxSec: 390 } });
   const r = await ingestEmail(lead());
   assert.equal(r.firstTouch.deferred, 'pacing'); // nothing goes out the instant the inquiry lands
@@ -86,6 +87,7 @@ test('no message ever says STOP, opt out, AI or assistant; STOP still opts out i
 });
 
 test('text-only lead outside the send window: email-free lead texts at 8am; an email lead still gets the email at night', async () => {
+  config.email.sendMode = 'send'; // "Just sent you an email" only after a SENT email (a draft hasn't reached them)
   setNow('2026-11-04T07:00:00Z'); // 11pm PST
   const r = await ingestEmail(lead());
   assert.equal(mockMailbox.length, 1, 'email goes any hour');
@@ -185,6 +187,7 @@ test('"is this a bot?" never gets an automatic answer: it goes to Pierce', async
 });
 
 test('LoopNet "saved your listing": email goes out, the text waits for Pierce\'s Y', async () => {
+  config.email.sendMode = 'send'; // "Just sent you an email" only after a SENT email (a draft hasn't reached them)
   const r = await ingestEmail({ From: 'notifications@loopnet.com', Subject: 'Someone favorited your listing', TextBody: 'Pat Investor added your listing to their favorites.\nName: Pat Investor\nEmail: pat@example.com\nPhone: 916-555-0142\nListing: Lighthouse Resort' });
   assert.equal(r.lead.source, 'favorite');
   assert.match(mockMailbox.at(-1).text, /^Hi Pat,\n\nSaw you saved Lighthouse Resort on LoopNet, so I wanted to send over the details\./);
