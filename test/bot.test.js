@@ -87,7 +87,7 @@ test('Crexi email -> instant first text -> HubSpot deal in New Buyer', async () 
   // Pierce's voice (Nov 1 2026): as Pierce, no AI announcement, no STOP line, one qualifying question
   assert.match(text, /^Hey Jane, this is Pierce over at CRI Brokerage! Saw your inquiry on Hidden Harbor Marina & RV Park on Crexi\./);
   assert.match(text, /You can sign the NDA here to unlock the OM: https:\/\/example\.com\/ca/);
-  assert.match(text, /What's the best email to send you the details\?$/); // one question, at the end
+  assert.match(text, /What's the best email to send over the OM and info\?$/); // one question, at the end
   assert.ok(!/STOP|opt out|\bAI\b|assistant/i.test(text), text);
   const lead = await db.findLeadByPhone('+15305550101');
   assert.equal(lead.status, 'contacted');

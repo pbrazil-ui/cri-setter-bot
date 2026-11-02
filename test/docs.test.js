@@ -132,7 +132,7 @@ test('team-only Dropbox link: SMS lead with no email -> Pierce is asked to send 
   assert.equal(mockMailbox.length, 0);
 });
 
-test('team-only Dropbox link: lead has an email -> OM attached to an Outlook draft, nobody cc\'d', async () => {
+test('team-only Dropbox link: lead has an email -> OM attached to an Outlook draft, Dylan cc\'d', async () => {
   await sms(PIERCE, `CA${LEAD}`);
   await db.updateLead(LEAD, { email: 'dana@example.com' });
   mockFs.links.om1 = 'https://www.dropbox.com/team-only/om1';
@@ -142,14 +142,14 @@ test('team-only Dropbox link: lead has an email -> OM attached to an Outlook dra
   assert.ok(ownerLog.some((t) => /needs .*Offering Memorandum.* by email/.test(t)));
 });
 
-test('email-only lead (no phone): first email is sent automatically (policy) with links, nobody cc\'d', async () => {
+test('email-only lead (no phone): first email is sent automatically (policy) with links, Dylan cc\'d', async () => {
   const r = await ingestEmail({ From: 'leads@loopnet.com', Subject: 'LoopNet lead', TextBody: 'Name: Sam Fund\nEmail: sam@fund.com\nProperty: Lighthouse Resort\nMessage: Send details please' });
   assert.ok(r.created);
   const ft = r.firstTouch;
   assert.ok(ft.sent, JSON.stringify(ft)); // send, not draft (Pierce, Nov 2 2026)
   const m = mockMailbox.at(-1);
   assert.equal(m.to, 'sam@fund.com');
-  assert.deepEqual(m.cc, []); // no cc (Pierce, Nov 2 2026)
+  assert.deepEqual(m.cc, ['DylanB@cricommercial.com']); // Dylan cc'd on lead emails (Pierce, Nov 2 2026)
   assert.match(m.subject, /Lighthouse Resort/);
   assert.match(m.text, /^Hi Sam,/);
   assert.match(m.text, /You can sign the NDA here to unlock the OM and data room: https:\/\/example\.com\/ca/);

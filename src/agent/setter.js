@@ -115,7 +115,7 @@ export async function sendViaEmail(lead, text, kind, onSend = {}, attachments = 
   const listing = lead.listing_id ? await db.getListing(lead.listing_id) : null;
   const subject = lead.email_thread_subject || propertyLabel(lead, listing);
   try {
-    const r = await sendEmail({ to: lead.email, subject, text, attachments: files, inReplyToId: lead.email_last_message_id || null });
+    const r = await sendEmail({ to: lead.email, cc: config.email.leadCc, subject, text, attachments: files, inReplyToId: lead.email_last_message_id || null });
     await db.insertMessage({ lead_id: lead.id, direction: 'out', channel: 'email', body: text, status: r.mode === 'sent' ? 'sent' : 'drafted', kind, meta: { graph_id: r.id, attachments: files.map((f) => f.name) } });
     if (r.mode === 'sent') await db.updateLead(lead.id, { last_outbound_at: iso(), email_thread_subject: subject, ...onSend });
     else await notifyOwner(`Email draft ready in Outlook for ${leadLabel(lead)}${files.length ? ` with ${files.map((f) => f.name).join(', ')}` : ''}. Review and send from Outlook/Superhuman.`);

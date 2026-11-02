@@ -242,7 +242,7 @@ test('Pierce, Nov 2: only his two mailboxes, never Dylan\'s or anyone else\'s; n
   for (const ep of ['files/delete_v2', 'files/permanently_delete', 'files/move_v2', 'sharing/revoke_shared_link']) assert.throws(() => assertDropboxAllowed(ep), /never deletes/, ep);
   assert.doesNotThrow(() => assertDropboxAllowed('sharing/create_shared_link_with_settings'));
   assert.deepEqual(config.email.readMailboxes, ['pbrazil@cribrokerage.com'], 'one inbox, two addresses: read once');
-  assert.deepEqual(config.email.alwaysCc, [], 'no cc: not Dylan, not Duane (Pierce, Nov 2 2026)');
+  assert.deepEqual(config.email.leadCc, ['DylanB@cricommercial.com'], 'Dylan cc\'d on lead emails only (Pierce, Nov 2 2026); never read');
 });
 
 test('Dylan\'s listing leads: a forwarded platform email from Dylan becomes a lead; other mail from him does not', async () => {
@@ -286,7 +286,7 @@ test('Pierce and Dylan both get the lead email: if Dylan also forwards it, the b
   await inboxTick();
   assert.equal(mockOutbox.filter((m) => m.to === '+15405550122').length, 1, 'one first text');
   assert.equal(mockMailbox.filter((m) => m.to === 'kim@example.com').length, 1, 'one first email');
-  assert.deepEqual(mockMailbox.at(-1).cc, [], 'nobody cc\'d');
+  assert.deepEqual(mockMailbox.at(-1).cc, ['DylanB@cricommercial.com'], 'Dylan cc\'d on the lead email');
 });
 
 test('no code path calls Graph outside the mailbox guard', async () => {

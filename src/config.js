@@ -23,6 +23,9 @@ export const config = {
     apiKey: env.ANTHROPIC_API_KEY,
     model: env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
     extractModel: env.ANTHROPIC_EXTRACT_MODEL || 'claude-haiku-5-5',
+    // effort: medium for buyer conversations (Sonnet 5.5 defaults to high, which costs more for chat-length work)
+    effort: env.ANTHROPIC_EFFORT || 'medium',
+    extractEffort: env.ANTHROPIC_EXTRACT_EFFORT || 'medium',
   },
 
   rc: {
@@ -40,8 +43,8 @@ export const config = {
     sendMode: env.EMAIL_SEND_MODE || 'send',
     tenantId: env.MS_TENANT_ID, clientId: env.MS_CLIENT_ID, clientSecret: env.MS_CLIENT_SECRET,
     mailbox: env.EMAIL_MAILBOX || 'pbrazil@cribrokerage.com',
-    // Pierce (Nov 2 2026): no cc. Not Dylan, not Duane. Set EMAIL_ALWAYS_CC only if he asks for one.
-    alwaysCc: list(env.EMAIL_ALWAYS_CC, []),
+    // Pierce (Nov 2 2026, latest): cc Dylan on every email to a LEAD. Never on Pierce's own Brief/alerts. Not Duane.
+    leadCc: list(env.EMAIL_LEAD_CC || env.EMAIL_ALWAYS_CC, ['DylanB@cricommercial.com']),
     // Graph-sent mail gets no Outlook signature, so the bot appends this one (from Pierce's my-writing-style skill)
     signatureHtml: env.EMAIL_SIGNATURE_HTML ?? 'Pierce Brazil<br>Senior Investment Associate<br>Commercial Real Estate Investors, Inc.<br>DRE #02247759 | CRI DRE #01807613<br>Direct (949) 335-5921<br>cribrokerage.com',
     maxAttachmentMb: num(env.EMAIL_MAX_ATTACHMENT_MB, 3),

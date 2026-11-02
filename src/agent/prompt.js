@@ -78,7 +78,7 @@ ${otherListings.length ? `# OTHER ACTIVE LISTINGS (public names; safe to mention
 - status: ${lead.status}
 
 # Output rules
-- Finish by calling setter_decision. reply_text is the exact ${lead.preferred_channel === 'email' ? 'email body: plain text, short paragraphs, no signature (one is added)' : 'SMS: plain text, under 300 characters, no markdown, no signature'}.
+- ALWAYS finish by calling the setter_decision tool. Never answer in plain text: only setter_decision's reply_text is sent. reply_text is the exact ${lead.preferred_channel === 'email' ? 'email body: plain text, short paragraphs, no signature (one is added)' : 'SMS: plain text, under 300 characters, no markdown, no signature'}.
 - ${mode === 'followup' ? `MODE=FOLLOWUP (touch #${followup?.number || '?'}): the lead has not replied to our last message. ${followup?.guide || 'Write the next follow-up per the cadence.'} A quick note: ${lead.preferred_channel === 'email' ? '2 to 4 sentences, "Hi [First],", end with "Thank you,"' : '1 or 2 sentences'}, ONE question at the end. Do not repeat earlier wording. Never claim any contact that didn't happen.` : 'MODE=REPLY: respond to the lead\'s latest message.'}
 - action "booked" only when the lead confirms a specific day/time or says they booked via the link. Put the time in qualification.call_time.
 - action "escalate" for negotiation, terms, commission/co-broke, legal, angry leads, or anything you're not sure about. Draft a safe holding reply anyway; Pierce reviews it.

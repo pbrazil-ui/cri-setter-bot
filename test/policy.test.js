@@ -129,6 +129,7 @@ test('Morning Broker Brief: fires once a day after 7:30 local, summarizes done /
   assert.match(text, /Needs you: 1 drafts \(Y\d+\)/);
   assert.equal(mockMailbox.at(-1)?.to, config.owner.email);
   assert.match(mockMailbox.at(-1).subject, /Morning Broker Brief/);
+  assert.deepEqual(mockMailbox.at(-1).cc, [], 'the Brief is Pierce\'s alone: Dylan is cc\'d on lead emails only');
   setNow('2026-11-04T18:00:00Z');
   assert.equal(await briefTick(), null); // not twice
   // renderSms stays short enough for a couple of SMS segments on a quiet day

@@ -81,7 +81,7 @@ const toHtml = (text) => text.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\
  * Returns { id, mode: 'draft' | 'sent' }.
  */
 export async function sendEmail({ to, cc = [], subject, text, attachments = [], inReplyToId = null }) {
-  const ccAll = [...new Set([...cc, ...E.alwaysCc].filter(Boolean))];
+  const ccAll = [...new Set(cc.filter(Boolean))]; // only what the caller passes: lead emails pass config.email.leadCc
   if (E.mode === 'mock') { const id = `mail-${mockMailbox.length + 1}`; mockMailbox.push({ id, to, cc: ccAll, subject, text, attachments: attachments.map((a) => a.name), mode: E.sendMode, inReplyToId }); return { id, mode: E.sendMode === 'send' ? 'sent' : 'draft' }; }
 
   const bodyHtml = toHtml(text) + (E.sendMode === 'send' && E.signatureHtml ? `<br>${E.signatureHtml}` : '');

@@ -8,37 +8,63 @@ async function getClient() {
   return client;
 }
 
-async function callTool({ model, system, content, tool, maxTokens = 800 }) {
+// Current models (Claude Sonnet 5.5 / Opus 5.5) reject forced tool_choice ("tool"/"any") with a 400, so:
+//  - one-shot extraction uses structured outputs (output_config.format, a JSON schema) -> guaranteed parseable JSON
+//  - the setter agent loop uses tool_choice auto + strict tools + a prompt instruction, and re-prompts if no decision
+// Thinking is adaptive by default on these models and its tokens count toward max_tokens, so budgets are generous.
+
+/** Deep copy with additionalProperties:false on every object (required by structured outputs / strict tools). */
+export function strictSchema(schema) {
+  if (Array.isArray(schema)) return schema.map(strictSchema);
+  if (!schema || typeof schema !== 'object') return schema;
+  const out = {};
+  for (const [k, v] of Object.entries(schema)) out[k] = (k === 'properties' ? Object.fromEntries(Object.entries(v).map(([pk, pv]) => [pk, strictSchema(pv)])) : strictSchema(v));
+  if (out.type === 'object') { out.additionalProperties = false; if (!out.properties) out.properties = {}; }
+  return out;
+}
+
+function checkStop(res, what) {
+  if (res.stop_reason === 'refusal') throw new Error(`${what}: Claude declined (${res.stop_details?.category || 'refusal'})`);
+  if (res.stop_reason === 'max_tokens') throw new Error(`${what}: hit max_tokens before finishing`);
+}
+
+/** One request whose answer must be JSON matching `schema` (structured outputs). Returns the parsed object. */
+async function callJson({ model, system, content, schema, maxTokens = 16000, effort, what = 'claude' }) {
   const res = await (await getClient()).messages.create({
-    model, max_tokens: maxTokens, system, tools: [tool],
-    tool_choice: { type: 'tool', name: tool.name },
+    model, max_tokens: maxTokens, system,
     messages: [{ role: 'user', content }],
+    output_config: { format: { type: 'json_schema', schema: strictSchema(schema) }, ...(effort ? { effort } : {}) },
   });
-  const block = res.content.find((b) => b.type === 'tool_use');
-  if (!block) throw new Error('model returned no tool call');
-  return block.input;
+  checkStop(res, what);
+  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  try { return JSON.parse(text); } catch { throw new Error(`${what}: response was not valid JSON`); }
 }
 
 /**
  * Agent loop: the model may call document/math tools, then must finish with setter_decision.
- * executors = makeExecutors(ctx). Capped at 6 steps; last step forces the decision.
+ * executors = makeExecutors(ctx). tool_choice stays "auto" (forced choice is a 400 on current models): the prompt
+ * says to finish with setter_decision, and if a turn ends without it we ask once more. Capped at 6 model calls.
  */
 export async function runSetter({ lead, listing, messages, mode = 'reply', executors, kb = [], openQuestions = [], followup = null, otherListings = [] }) {
   if (config.llmMode === 'mock') return mockSetter({ lead, listing, messages, mode, executors, kb, openQuestions, followup });
   const system = buildSystemPrompt({ lead, listing, mode, kb, openQuestions, followup, otherListings });
   const convo = [{ role: 'user', content: `Conversation so far:\n${buildTranscript(messages)}\n\nUse tools if you need facts or math, then call setter_decision.` }];
-  const tools = executors ? [...AGENT_TOOLS, SETTER_TOOL] : [SETTER_TOOL];
+  const tools = (executors ? [...AGENT_TOOLS, SETTER_TOOL] : [SETTER_TOOL]).map((t) => ({ ...t, input_schema: strictSchema(t.input_schema), strict: true }));
   const MAX = 6;
   for (let step = 0; step < MAX; step++) {
-    const last = step === MAX - 1 || !executors;
     const res = await (await getClient()).messages.create({
-      model: config.anthropic.model, max_tokens: 1500, system, tools, messages: convo,
-      tool_choice: last ? { type: 'tool', name: SETTER_TOOL.name } : { type: 'any' },
+      model: config.anthropic.model, max_tokens: 16000, system, tools, messages: convo,
+      ...(config.anthropic.effort ? { output_config: { effort: config.anthropic.effort } } : {}),
     });
+    checkStop(res, 'setter');
     const uses = res.content.filter((b) => b.type === 'tool_use');
     const final = uses.find((u) => u.name === SETTER_TOOL.name);
     if (final) return final.input;
-    convo.push({ role: 'assistant', content: res.content });
+    convo.push({ role: 'assistant', content: res.content }); // unchanged, thinking blocks included (append-only)
+    if (!uses.length) { // answered in plain text: that text never reaches anyone, so ask for the decision
+      convo.push({ role: 'user', content: 'Call the setter_decision tool now with your decision. Plain text is not sent to the lead.' });
+      continue;
+    }
     convo.push({
       role: 'user',
       content: await Promise.all(uses.map(async (u) => {
@@ -63,30 +89,28 @@ export async function extractDocument({ filename, docType, pdf, text }) {
     ? [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf.toString('base64') } }, { type: 'text', text: `File: ${filename} (classified as ${docType}). Extract per instructions.` }]
     : `File: ${filename} (classified as ${docType}).\n\n${text}`;
   const model = ['t12', 'rent_roll', 'om'].includes(docType) ? config.anthropic.model : config.anthropic.extractModel;
-  return callTool({ model, system: EXTRACT_SYSTEM, content, tool: DOC_TOOL, maxTokens: 16000 });
+  return callJson({ model, system: EXTRACT_SYSTEM, content, schema: DOC_TOOL.input_schema, maxTokens: 16000, effort: config.anthropic.extractEffort, what: `extract ${filename}` });
 }
 
 /** Turn Pierce's quick answer into a reply to the lead, using only his facts. */
 export async function polishAnswer({ lead, question, answer }) {
   if (config.llmMode === 'mock') return `Confirmed: ${answer}`;
-  const r = await callTool({
-    model: config.anthropic.model,
+  const r = await callJson({
+    model: config.anthropic.model, effort: 'low', maxTokens: 4000, what: 'polish answer',
     system: `Rewrite the broker's answer as a short, natural ${lead.preferred_channel === 'email' ? 'email reply (no signature)' : 'text message (under 300 characters)'} to the lead.${config.discloseAi ? '' : ' Write as the broker himself, first person.'} Use ONLY facts in the broker's answer. Don't add claims, numbers, or enthusiasm.`,
     content: `Lead asked: ${question}\nPierce's answer: ${answer}`,
-    tool: { name: 'reply', description: 'The reply', input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
-    maxTokens: 400,
+    schema: { type: 'object', properties: { text: { type: 'string', description: 'The reply' } }, required: ['text'] },
   });
   return r.text;
 }
 
 export async function extractLeadFromEmail({ subject, text }) {
   if (config.llmMode === 'mock') return mockExtract({ subject, text });
-  return callTool({
-    model: config.anthropic.extractModel,
+  return callJson({
+    model: config.anthropic.extractModel, effort: 'low', maxTokens: 4000, what: 'extract lead',
     system: 'You extract structured lead data from commercial real estate listing-platform lead notifications (Crexi, LoopNet, RVParkStore, MHVillage, website forms), sometimes forwarded. The lead is the person who inquired, never the broker or the platform. Return only what is in the email. Never guess phone numbers or emails.',
     content: `Subject: ${subject}\n\n${text}`,
-    tool: EXTRACT_TOOL,
-    maxTokens: 500,
+    schema: EXTRACT_TOOL.input_schema,
   });
 }
 

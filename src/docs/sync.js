@@ -21,7 +21,8 @@ export async function syncFolder(listingId, rootPath, { internal = false } = {})
     if (internal && !/\.(pdf|docx|txt|md|csv|xlsx)$/i.test(entry.name)) { out.skipped++; continue; }
     seen.add(entry.id);
     const prev = existing.get(entry.id);
-    if (prev && prev.content_hash === entry.content_hash && prev.tier === cls.tier) { out.unchanged++; continue; }
+    // unchanged = same bytes, same tier, and read successfully; a failed read is retried on the next sync
+    if (prev && prev.content_hash === entry.content_hash && prev.tier === cls.tier && prev.status !== 'failed') { out.unchanged++; continue; }
     if (prev) await db.deleteDocument(prev.id);
     const doc = await ingestFile({ listingId, entry, buffer: await download(entry.id), cls });
     if (doc.status === 'failed') out.failed++; else if (prev) out.updated++; else out.added++;

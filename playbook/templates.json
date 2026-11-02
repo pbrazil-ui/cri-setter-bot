@@ -4,20 +4,16 @@
   "who_ai": "{owner}'s AI assistant at {company}",
   "property_fallback": "one of our listings",
   "profile_line": "You can see all of my current listings here: {profile}",
-
   "sms_after_email": "Hey{first}, this is {who}! Just sent you an email with the info on {property}{in_city}, so check your inbox when you get a chance. Happy to hop on a quick call if helpful. Are you buying on your own or with a group?",
-  "listing_email": "Hey{first}, this is {who}! Saw your inquiry on {property}{in_city}{platform}.{sms_link} What's the best email to send you the details?",
-  "webhook": "Hey{first}, this is {who}! Saw your inquiry on {property}{in_city}{platform}.{sms_link} What's the best email to send you the details?",
-  "default": "Hey{first}, this is {who}! Thanks for your interest in {property}{in_city}.{sms_link} What's the best email to send you the details?",
+  "listing_email": "Hey{first}, this is {who}! Saw your inquiry on {property}{in_city}{platform}.{sms_link} What's the best email to send over the OM and info?",
+  "webhook": "Hey{first}, this is {who}! Saw your inquiry on {property}{in_city}{platform}.{sms_link} What's the best email to send over the OM and info?",
+  "default": "Hey{first}, this is {who}! Thanks for your interest in {property}{in_city}.{sms_link} What's the best email to send over the OM and info?",
   "csv": "Hey{first}, this is {who}. Following up on your interest in {property}. Still looking for MH or RV parks?",
   "sms_link": " You can sign the NDA here to unlock the OM: {ca_link}",
   "sms_link_profile": " You can see all of my current listings here: {profile}",
-
   "favorite_after_email": "Hey{first}, this is {who}! Saw you saved {property}{platform} and sent you an email with the details, so check your inbox when you get a chance. Does it fit what you're looking for?",
   "favorite": "Hey{first}, this is {who}! Saw you saved {property}{platform}. Happy to send info or hop on a quick call if helpful. What's the best email for you?",
-
   "sms_unavailable": "Hey{first}, this is {who}! Thanks for your inquiry on {property}. That one is {availability}, but I have other listings that may fit: {profile} What does your buy box look like?",
-
   "email_first_touch": "Hi{first},\n\nThanks for reaching out on {property}{platform}.{details}\n\nYou can see all of my current listings here: {profile}\n\nDoes this one fit what you're looking for? What does your buy box look like?\n\nThank you,",
   "email_favorite": "Hi{first},\n\nSaw you saved {property}{platform}, so I wanted to send over the details.{details}\n\nYou can see all of my current listings here: {profile}\n\nDoes this one fit what you're looking for? What does your buy box look like?\n\nThank you,",
   "email_unavailable": "Hi{first},\n\nThanks for reaching out on {property}. It's {availability} right now, but I have other listings that may fit.\n\nYou can see all of my current listings here: {profile}\n\nWhat does your buy box look like?\n\nThank you,",
