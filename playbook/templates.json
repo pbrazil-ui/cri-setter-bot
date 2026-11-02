@@ -1,25 +1,27 @@
 {
-  "_note": "First-contact messages (fixed wording, no AI involved). Pierce's standard (Nov 1 2026): the buyer gets the email with links 1-2 min after the inquiry, then a text 4-6 min later pointing them to it, with one qualifying question. Written as Pierce. No 'Reply STOP' line (replies to the buyer's own inquiry, not cold outreach; STOP/opt-out words are still honored in code). No AI announcement. Placeholders: {first} {who} {property} {platform} (' on Crexi' etc.) {availability} ('under contract' / 'sold') {details} (email links block) {sms_link} (CA link sentence for text-only leads).",
+  "_note": "First-contact messages (fixed wording, sent in code). Sources: Pierce's chat instructions (Nov 1-2 2026) and his elite-cre-sales skill. Email with links 1-2 min after the inquiry, then a text 4-6 min later pointing to it. Written as Pierce. Every email carries the Crexi profile line. Each message ends with ONE question. No 'Reply STOP' line (opt-outs handled in code). No AI announcement. Placeholders: {first} {who} {property} {in_city} (' in Isleton, CA') {platform} (' on Crexi') {availability} {details} {sms_link} {profile}.",
   "who_plain": "{ownerFirst} over at {companyShort}",
   "who_ai": "{owner}'s AI assistant at {company}",
   "property_fallback": "one of our listings",
+  "profile_line": "You can see all of my current listings here: {profile}",
 
-  "sms_after_email": "Hey{first}, this is {who}. Just sent you an email with the info on {property}, so check your inbox when you get a chance. Let me know if you need anything else. Are you buying on your own or with a group?",
-  "listing_email": "Hey{first}, this is {who}. Saw your inquiry on {property}{platform}.{sms_link} What's the best email to send you the details? And are you buying on your own or with a group?",
-  "webhook": "Hey{first}, this is {who}. Saw your inquiry on {property}{platform}.{sms_link} What's the best email to send you the details? And are you buying on your own or with a group?",
-  "default": "Hey{first}, this is {who}. Thanks for your interest in {property}.{sms_link} What's the best email to send you the details? And are you buying on your own or with a group?",
-  "csv": "Hey{first}, this is {who}. Following up on your interest in {property}. Still looking at parks right now?",
-  "sms_link": " Here's the CA for the OM and financials: {ca_link}",
+  "sms_after_email": "Hey{first}, this is {who}! Just sent you an email with the info on {property}{in_city}, so check your inbox when you get a chance. Happy to hop on a quick call if helpful. Are you buying on your own or with a group?",
+  "listing_email": "Hey{first}, this is {who}! Saw your inquiry on {property}{in_city}{platform}.{sms_link} What's the best email to send you the details?",
+  "webhook": "Hey{first}, this is {who}! Saw your inquiry on {property}{in_city}{platform}.{sms_link} What's the best email to send you the details?",
+  "default": "Hey{first}, this is {who}! Thanks for your interest in {property}{in_city}.{sms_link} What's the best email to send you the details?",
+  "csv": "Hey{first}, this is {who}. Following up on your interest in {property}. Still looking for MH or RV parks?",
+  "sms_link": " You can sign the NDA here to unlock the OM: {ca_link}",
+  "sms_link_profile": " You can see all of my current listings here: {profile}",
 
-  "favorite_after_email": "Hey{first}, this is {who}. Saw you saved {property}{platform} and sent you an email with the details, so check your inbox when you get a chance. Are you buying on your own or with a group?",
-  "favorite": "Hey{first}, this is {who}. Saw you saved {property}{platform}. Want me to send over the details? What's the best email?",
+  "favorite_after_email": "Hey{first}, this is {who}! Saw you saved {property}{platform} and sent you an email with the details, so check your inbox when you get a chance. Does it fit what you're looking for?",
+  "favorite": "Hey{first}, this is {who}! Saw you saved {property}{platform}. Happy to send info or hop on a quick call if helpful. What's the best email for you?",
 
-  "sms_unavailable": "Hey{first}, this is {who}. Thanks for your inquiry on {property}. That one is {availability}, but I have other listings I can share. What are you looking for?",
+  "sms_unavailable": "Hey{first}, this is {who}! Thanks for your inquiry on {property}. That one is {availability}, but I have other listings that may fit: {profile} What does your buy box look like?",
 
-  "email_first_touch": "Hi{first},\n\nThanks for your inquiry on {property}{platform}.{details}\n\nA few quick questions so I can get you the right information: are you buying on your own or with a group, do you own parks today, and how are you planning to finance?\n\nLet me know if you need anything else.\n\nThanks,",
-  "email_favorite": "Hi{first},\n\nSaw you saved {property}{platform}, so I wanted to send over the details.{details}\n\nA couple quick questions so I send the right information: are you buying on your own or with a group, and what size and location are you focused on?\n\nThanks,",
-  "email_unavailable": "Hi{first},\n\nThanks for reaching out about {property}. It's {availability} right now, but I have other listings I can share.\n\nWhat are you looking for in terms of property type, size and location? I'll send over anything that fits.\n\nThanks,",
+  "email_first_touch": "Hi{first},\n\nThanks for reaching out on {property}{platform}.{details}\n\nYou can see all of my current listings here: {profile}\n\nDoes this one fit what you're looking for? What does your buy box look like?\n\nThank you,",
+  "email_favorite": "Hi{first},\n\nSaw you saved {property}{platform}, so I wanted to send over the details.{details}\n\nYou can see all of my current listings here: {profile}\n\nDoes this one fit what you're looking for? What does your buy box look like?\n\nThank you,",
+  "email_unavailable": "Hi{first},\n\nThanks for reaching out on {property}. It's {availability} right now, but I have other listings that may fit.\n\nYou can see all of my current listings here: {profile}\n\nWhat does your buy box look like?\n\nThank you,",
   "email_details_summary": "\n\n{summary}",
   "email_details_link": "\n\n{label}: {url}",
-  "email_details_ca": "\n\nThe CA is here, and once it's signed I'll send the OM, rent roll and financials: {ca_link}"
+  "email_details_ca": "\n\nYou can sign the NDA here to unlock the OM and data room: {ca_link}"
 }

@@ -29,6 +29,44 @@ const safe = (fn) => async (...args) => {
 const RANK = { [S.newBuyer]: 0, [S.qualified]: 1, [S.offerOut]: 2, [S.underContract]: 3, [S.won]: 4, [S.lost]: -1 };
 const HUMAN_STAGES = new Set([S.offerOut, S.underContract, S.won]);
 
+const dealIdFor = async (lead) => {
+  const listing = lead.listing_id ? await db.getListing(lead.listing_id) : null;
+  return lead.hubspot_deals?.[dealKey(lead, listing)] || null;
+};
+
+/**
+ * A HubSpot task for Pierce (the bot can't call). Deduped per lead by `key`. Returns the task id, or null if HubSpot
+ * is off or the call failed (the caller then texts Pierce instead, so the reminder is never lost).
+ */
+export const createTask = safe(async (leadId, { key, subject, body, dueAt, type = 'CALL', priority = 'HIGH' }) => {
+  const lead = await db.getLead(leadId);
+  if (lead.hubspot_tasks?.[key]) return lead.hubspot_tasks[key];
+  const contactId = lead.hubspot_contact_id || (await upsertContact(lead));
+  const dealId = await dealIdFor(lead);
+  const associations = [];
+  if (contactId) associations.push({ to: { id: contactId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 204 }] });
+  if (dealId) associations.push({ to: { id: dealId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 216 }] });
+  const t = await api('POST', '/crm/v3/objects/tasks', {
+    properties: {
+      hs_timestamp: dueAt, hs_task_subject: subject, hs_task_body: body, hs_task_status: 'NOT_STARTED',
+      hs_task_priority: priority, hs_task_type: type, ...(hs.ownerId ? { hubspot_owner_id: hs.ownerId } : {}),
+    },
+    associations,
+  });
+  await db.updateLead(leadId, { hubspot_tasks: { ...(lead.hubspot_tasks || {}), [key]: t.id } });
+  hubspotLog.push({ op: 'task', leadId, key, subject });
+  return t.id;
+});
+
+/** The deal's "Next step" field: every lead always shows what happens next and when. */
+export const setNextStep = safe(async (leadId, text) => {
+  const lead = await db.getLead(leadId);
+  const dealId = lead && (await dealIdFor(lead));
+  if (dealId) await api('PATCH', `/crm/v3/objects/deals/${dealId}`, { properties: { hs_next_step: text.slice(0, 250) } });
+  hubspotLog.push({ op: 'next_step', leadId, text });
+  return true;
+});
+
 /** Read-only: token works for contacts and deals, and both pipelines are reachable. */
 export async function hubspotCheck() {
   if (!enabled()) return { ok: false, problems: ['HUBSPOT_TOKEN not set'] };
@@ -49,6 +87,7 @@ export function targetStageFor(status) {
       return { stage: S.qualified };
     case 'disqualified': return { stage: S.lost, lostReason: 'not_a_fit', detail: 'Setter bot: not a buyer / not interested' };
     case 'no_response': return { stage: S.lost, lostReason: 'unresponsive', detail: 'Setter bot: no reply after full follow-up cadence' };
+    case 'nurture': return { stage: S.lost, lostReason: 'unresponsive', detail: 'Setter bot: no reply after day 7; on the long-term email list for new listings' };
     case 'opted_out': return { stage: S.lost, lostReason: 'other', detail: 'Setter bot: lead opted out of texts' };
     case 'wrong_number': return { stage: S.lost, lostReason: 'duplicate', detail: 'Setter bot: wrong number' };
     default: return null;

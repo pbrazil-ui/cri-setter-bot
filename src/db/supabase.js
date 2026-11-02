@@ -35,7 +35,7 @@ export const db = {
   ),
   async listLeadsAwaitingReply() {
     const rows = await one(
-      sb.from('leads').select('*').in('status', ['contacted', 'engaged', 'qualified', 'in_dd'])
+      sb.from('leads').select('*').in('status', ['contacted', 'engaged', 'qualified', 'in_dd', 'nurture'])
         .not('last_outbound_at', 'is', null).limit(1000),
     );
     return rows.filter((l) => !l.last_inbound_at || l.last_outbound_at >= l.last_inbound_at);

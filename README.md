@@ -22,6 +22,8 @@ Pierce's cell ◄── approvals (Y/N/E), questions (A#), CA#, PAUSE, Morning B
 - **New inquiry**: 1–2 min later an email as Pierce with the summary, listing page, public flyer links, the CA link and three qualifying questions; 4–6 min after that a text ("Hey Jane, this is Pierce over at CRI. Just sent you an email with the info on Lighthouse Resort, so check your inbox... Are you buying on your own or with a group?"). Texts only go out 8am–8pm Mon–Sat PT; emails any hour. No "Reply STOP" line, no AI announcement (Pierce's call; opt-outs still handled in code; "are you a bot?" goes to Pierce).
 - **Under contract / sold** (HubSpot stage or Dropbox `02 - Under Contract`): "That one is under contract, but I have other listings I can share. What are you looking for?" Pierce gets their criteria as a MATCH text. No documents on that deal.
 - **LoopNet "saved your listing"**: same email; the text waits for Pierce's Y.
+- **They go quiet**: day 1 text + a HubSpot call task for Pierce (the bot can't call and never says it did), day 3 email, day 7 text, then a listings email every 2 weeks to 3 months and monthly after, until they reply, say no or opt out.
+- **They email back**: answered by email in the same thread, unless Pierce already replied there.
 - **They reply**: waits a random 45 seconds to 5 minutes (a burst of texts gets one answer, never two texts within 45s), then responds. Facts come from tools, not memory:
   - `rent_roll_stats` → exact unit mix (MH / RV / park model), occupancy, POH/TOH, average rents, in-place rent.
   - `financial_summary` → income, expenses, NOI, expense ratio from the seller's P&Ls, with discrepancies flagged.

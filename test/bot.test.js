@@ -85,9 +85,9 @@ test('Crexi email -> instant first text -> HubSpot deal in New Buyer', async () 
   assert.ok(r.firstTouch.sent);
   const text = lastTo('+15305550101');
   // Pierce's voice (Nov 1 2026): as Pierce, no AI announcement, no STOP line, one qualifying question
-  assert.match(text, /^Hey Jane, this is Pierce over at CRI\. Saw your inquiry on Hidden Harbor Marina & RV Park on Crexi\./);
-  assert.match(text, /Here's the CA for the OM and financials: https:\/\/example\.com\/ca/);
-  assert.match(text, /buying on your own or with a group\?$/);
+  assert.match(text, /^Hey Jane, this is Pierce over at CRI Brokerage! Saw your inquiry on Hidden Harbor Marina & RV Park on Crexi\./);
+  assert.match(text, /You can sign the NDA here to unlock the OM: https:\/\/example\.com\/ca/);
+  assert.match(text, /What's the best email to send you the details\?$/); // one question, at the end
   assert.ok(!/STOP|opt out|\bAI\b|assistant/i.test(text), text);
   const lead = await db.findLeadByPhone('+15305550101');
   assert.equal(lead.status, 'contacted');
@@ -242,5 +242,5 @@ test('LoopNet and website-form leads; forwarded email still detected by body', a
   assert.match(lastTo('+15305550101'), / on LoopNet\./);
   await ingestEmail({ From: 'pbrazil@cribrokerage.com', Subject: 'Fwd: New form submission', TextBody: 'Forwarded from HubSpot\nName: Web Lead\nEmail: web@example.com\nPhone: 555-201-0200\nProperty: Hidden Harbor' });
   const t = lastTo('+15552010200');
-  assert.match(t, /Saw your inquiry on Hidden Harbor\. Here's the CA/); // no platform named; the buyer's own wording
+  assert.match(t, /Saw your inquiry on Hidden Harbor\. You can sign the NDA/); // no platform named; the buyer's own wording
 });

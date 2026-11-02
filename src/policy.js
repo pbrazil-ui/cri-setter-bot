@@ -26,8 +26,8 @@ export function classify({ kind, lead, flags = {}, decision = {}, human = false,
   if (kind === 'approved' || kind === 'owner_edit') return null; // Pierce already decided
   // replies
   if (human || decision.action === 'escalate') return 'escalate.price_terms_legal';
+  if (flags.usedSensitive) return 'reply.sensitive_docs'; // before the channel: sensitive material needs Pierce's Y by email too
   if (email) return 'reply.email';
-  if (flags.usedSensitive) return 'reply.sensitive_docs';
   if (decision.action === 'ask_pierce') return 'reply.holding';
   if (decision.source === 'qa_bank') return 'reply.from_approved_answers';
   if (flags.links?.length) return 'reply.document_link';

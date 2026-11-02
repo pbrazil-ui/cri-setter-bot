@@ -31,7 +31,14 @@ const HUMAN_TOPICS = /\b(offer|loi|letter of intent|counter|best (and final|pric
 // "Is this a bot?" Pierce answers that himself; the bot never claims to be human and never denies being AI.
 const IDENTITY_QUESTION = /\b(are you (an? )?(bot|robot|ai|a\.i\.|real( person)?|human|automated|computer)|is this (an? )?(bot|robot|ai|automated|real person|computer|recording)|am i (talking|texting|speaking|chatting) (to|with) (an? )?(bot|robot|ai|real person|human|person|computer)|chat ?gpt|artificial intelligence)\b/i;
 export const asksIfBot = (text) => IDENTITY_QUESTION.test(String(text || ''));
-export const needsHuman = (text) => HUMAN_TOPICS.test(String(text || '')) || asksIfBot(text);
+// Tours: Pierce's skill says never schedule them; flag to Pierce.
+const TOUR = /\b(tour|site visit|walk (the )?(park|property|site)|see (the )?(park|property) in person|come (out|by) and see|visit the (park|property))\b/i;
+export const asksForTour = (text) => TOUR.test(String(text || ''));
+export const needsHuman = (text) => HUMAN_TOPICS.test(String(text || '')) || asksIfBot(text) || asksForTour(text);
+
+// The bot can't call. A message that says Pierce called, tried to, or left a voicemail would be false.
+const CONTACT_CLAIM = /\b(tried (calling|to call|to reach|reaching|to get a hold of|to catch)|(i |just )(called|rang|phoned)( you)?|gave you a (call|ring)|left (you )?(a )?(voicemail|vm|voice mail|message on your phone)|missed (you|your call)|tried your (cell|phone|line))\b/i;
+export const claimsContact = (text) => CONTACT_CLAIM.test(String(text || ''));
 
 function localParts(date, tz) {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(date);

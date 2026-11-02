@@ -52,7 +52,7 @@ export async function upsertIncomingLead(data, source, { quiet = false } = {}) {
     status: phone ? 'new' : 'no_phone',
     auto_send: !!config.autoSend[source],
     // first contact goes out 1-2 minutes after the inquiry lands (config.firstTouchDelay)
-    next_action_at: new Date(+now() + 1000 * (config.firstTouchDelay.minSec + Math.random() * Math.max(0, config.firstTouchDelay.maxSec - config.firstTouchDelay.minSec))).toISOString(),
+    next_action_at: new Date(+now() + 1000 * (config.firstTouchDelay.maxSec <= 0 ? 0 : config.firstTouchDelay.minSec + Math.random() * Math.max(0, config.firstTouchDelay.maxSec - config.firstTouchDelay.minSec))).toISOString(),
     raw: data.raw ?? null,
   });
   if (!phone && !quiet) {

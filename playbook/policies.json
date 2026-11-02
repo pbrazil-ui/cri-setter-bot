@@ -57,8 +57,8 @@
       "mode": "auto"
     },
     "reply.email": {
-      "mode": "approve",
-      "why": "email replies stay as Outlook drafts for now"
+      "mode": "auto",
+      "why": "Pierce (Nov 2 2026): send, don't draft. Email replies follow the same rules as texts; price/terms/legal and sensitive docs still escalate first."
     },
     "followup.pre_ca": {
       "mode": "auto"

@@ -27,7 +27,7 @@ RULES
 - Do not send any email or text, and do not change anything in HubSpot, Dropbox files, or Outlook mail.
 - Keep a running checklist in this chat: done / blocked (and why). No secrets in it.
 
-1. SUPABASE (supabase.com, project ccnybuifsgwwuqasjqmu)
+1. SUPABASE (supabase.com, project ccnybuifsgwwuqasjqmu). If asked about plans, Pierce approved paying: Pro ($25/mo) for backups.
    a. SQL Editor > New query. Open
       https://github.com/pbrazil-ui/cri-setter-bot/blob/claude/project-setup-integrations-un1lo6/supabase/schema.sql
       click "Raw", copy everything, paste, Run. Expect "Success. No rows returned." (Safe to re-run.)
@@ -42,6 +42,8 @@ RULES
 3. HUBSPOT (app.hubspot.com, portal 44904909)
    Settings (gear) > Integrations > Private Apps > Create a private app, name "CRI Setter Bot".
    Scopes: crm.objects.contacts.read, crm.objects.contacts.write, crm.objects.deals.read, crm.objects.deals.write.
+   If the scope list shows anything for Tasks (e.g. crm.objects.tasks.read / .write), check those too: the bot creates
+   call tasks for Pierce. (If a task ever fails, the bot texts Pierce the call details instead.)
    Create, then "Show token": needed for HUBSPOT_TOKEN.
 
 4. RINGCENTRAL (developers.ringcentral.com > Console)
@@ -109,12 +111,12 @@ MS_CLIENT_ID=<6b>
 MS_CLIENT_SECRET=<6d>
 EMAIL_MAILBOX=pbrazil@cribrokerage.com
 EMAIL_SEND_MODE=send
-EMAIL_SIGNATURE_HTML=<ask Pierce for his signature; paste as simple HTML, e.g. <p>Pierce Brazil<br>CRI Brokerage<br>PHONE</p>>
 DISCLOSE_AI=false
 
-      If RingCentral (step 4) isn't finished, set SMS_MODE=mock for now: the app refuses to start with missing
-      RingCentral values. Same for Microsoft: if step 6 isn't done, delete the MS_* lines (email is skipped).
-   e. Deploy. Deployments > latest > View logs. Healthy looks like:
+      Fill EVERY value before deploying. The texting number is already verified, so this goes live: the app texts and
+      emails real buyers as soon as it starts, and refuses to start if a RingCentral or Microsoft value is missing.
+      (Pierce's signature is built in; only set EMAIL_SIGNATURE_HTML if he wants a different one.)
+   e. Deploy. This is the live bot, not a test. Deployments > latest > View logs. Healthy looks like:
       "CRI setter bot on :PORT (db=supabase sms=live llm=live)", "[rc subscription]", "[listings] synced N from HubSpot",
       and about a minute later "[dropbox sync]". Copy any line containing "error", "FAILED" or "Missing env vars" for Pierce.
    f. Open PUBLIC_URL/health in a tab. Expect {"ok":true,"paused":false,"db":"supabase","sms":"live","llm":"live"}.
@@ -126,8 +128,9 @@ DISCLOSE_AI=false
    New monitor > HTTP(s) > URL: PUBLIC_URL/health > every 5 minutes > alert contact: Pierce's email and cell.
 
 9. REPORT to Pierce: the Railway domain, the /health result, the checklist, and anything blocked.
-   Remind him: test_mode is OFF (his call, Nov 1 2026). New inquiries get the email and text automatically; price,
-   terms, legal, sensitive documents and LoopNet "saved" texts still come to his phone for Y#. PAUSE stops everything.
+   Remind him: the bot is live (test_mode OFF, his call). New inquiries get the email and text automatically, quiet
+   buyers get followed up automatically (text and email), and every call becomes a HubSpot task for him. Price,
+   terms, legal, tours, sensitive documents and LoopNet "saved" texts still come to his phone for Y#. PAUSE stops everything.
 ```
 
 ## After the browser Claude finishes

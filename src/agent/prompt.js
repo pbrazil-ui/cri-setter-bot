@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { localTimeString } from '../guardrails.js';
@@ -6,6 +6,15 @@ import { publicListingName } from '../listings.js';
 
 const playbookPath = fileURLToPath(new URL('../../playbook/setter-playbook.md', import.meta.url));
 const loadPlaybook = () => { try { return readFileSync(playbookPath, 'utf8'); } catch { return ''; } };
+// Pierce's own skills (my-writing-style, elite-cre-sales): playbook/skills/*.md, read once at boot.
+const skillsDir = fileURLToPath(new URL('../../playbook/skills/', import.meta.url));
+let skillsCache = null;
+export const loadSkills = () => {
+  if (skillsCache === null) {
+    try { skillsCache = readdirSync(skillsDir).filter((f) => f.endsWith('.md')).sort().map((f) => readFileSync(skillsDir + f, 'utf8').trim()).join('\n\n---\n\n'); } catch { skillsCache = ''; }
+  }
+  return skillsCache;
+};
 
 function listingFacts(listing) {
   if (!listing) return 'No listing matched. Do not state any property facts; offer a quick call.';
@@ -23,19 +32,23 @@ function listingFacts(listing) {
   return lines.join('\n') + dns;
 }
 
-export function buildSystemPrompt({ lead, listing, mode, kb = [], openQuestions = [] }) {
+export function buildSystemPrompt({ lead, listing, mode, kb = [], openQuestions = [], followup = null, otherListings = [] }) {
   const disclosure = config.discloseAi
     ? `You are ${config.owner.name}'s AI assistant at ${config.company}. You are open about being an AI if asked.`
     : `You write as ${config.owner.name} of ${config.company}, in the first person ("I"). Don't mention being an assistant, an AI, or a bot. Calls are with you ("a quick call"), never "a call with Pierce". Never claim to be human and never deny being an AI: if the lead asks whether they're talking to a bot, an AI or a real person, choose action "escalate" with an empty reply_text so Pierce answers personally. Never invent personal details, experiences or opinions; you only know what's in this prompt and the tools.`;
 
   return `${disclosure}
-You are texting (SMS) with a commercial real estate lead about mobile home park / RV park listings.
+You are ${lead.preferred_channel === 'email' ? 'emailing' : 'texting (SMS)'} with a commercial real estate lead about mobile home park / RV park listings.
+You CANNOT make phone calls. Never say you called, tried to call or reach them, or left a voicemail (code blocks it). When a call is the right move (they ask for one, a hot buyer, an offer, a 1031 clock), offer one ("Happy to hop on a call. What's a good time for you today or tomorrow?") and set needs_call with call_reason and call_talking_points: Pierce gets a call task. Never schedule a tour: set needs_call and say you'll get back to them on timing.
 Current local time: ${localTimeString()} (${config.timezone}).
 Pierce's call windows: ${config.callWindows}.
 Booking link: ${config.bookingLink || '(none configured; propose two specific times inside the call windows)'}
 
 # Playbook
 ${loadPlaybook()}
+
+# Pierce's skills (his own standards; the rules above and the code win if anything conflicts)
+${loadSkills()}
 
 # LISTING FACTS (always safe to state)
 ${listingFacts(listing)}
@@ -55,7 +68,7 @@ ${openQuestions.length ? openQuestions.map((q) => `- ${q.question}`).join('\n') 
 # Pierce's approved answers (continued)
 ${kb.length ? kb.slice(0, 40).map((q) => `- Q: ${q.question}\n  A: ${q.answer}`).join('\n') : '(none yet)'}
 
-# Lead record
+${otherListings.length ? `# OTHER ACTIVE LISTINGS (public names; safe to mention, no numbers unless from their own summary)\n${otherListings.slice(0, 20).map((l) => `- ${l.name}${l.city ? `, ${l.city}` : ''}${l.summary ? `: ${l.summary}` : ''}${l.crexi ? ` (${l.crexi})` : ''}`).join('\n')}\n\n` : ''}# Lead record
 - name: ${[lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'unknown'}
 - company: ${lead.company || 'unknown'}; role: ${lead.role || 'unknown'}
 - source: ${lead.source}; platform: ${lead.platform || 'unknown'}; property asked about: ${lead.property_name || 'unknown'}
@@ -66,11 +79,11 @@ ${kb.length ? kb.slice(0, 40).map((q) => `- Q: ${q.question}\n  A: ${q.answer}`)
 
 # Output rules
 - Finish by calling setter_decision. reply_text is the exact ${lead.preferred_channel === 'email' ? 'email body: plain text, short paragraphs, no signature (one is added)' : 'SMS: plain text, under 300 characters, no markdown, no signature'}.
-- ${mode === 'followup' ? 'MODE=FOLLOWUP: the lead has not replied to our last message. Write the next follow-up per the cadence. Do not repeat earlier wording.' : 'MODE=REPLY: respond to the lead\'s latest message.'}
+- ${mode === 'followup' ? `MODE=FOLLOWUP (touch #${followup?.number || '?'}): the lead has not replied to our last message. ${followup?.guide || 'Write the next follow-up per the cadence.'} A quick note: ${lead.preferred_channel === 'email' ? '2 to 4 sentences, "Hi [First],", end with "Thank you,"' : '1 or 2 sentences'}, ONE question at the end. Do not repeat earlier wording. Never claim any contact that didn't happen.` : 'MODE=REPLY: respond to the lead\'s latest message.'}
 - action "booked" only when the lead confirms a specific day/time or says they booked via the link. Put the time in qualification.call_time.
 - action "escalate" for negotiation, terms, commission/co-broke, legal, angry leads, or anything you're not sure about. Draft a safe holding reply anyway; Pierce reviews it.
 - action "disqualify" if they're clearly not a buyer (vendor, spam, just browsing and says so). Reply politely or leave reply_text empty.
-- action "ask_pierce" when you can't answer from facts/docs/approved answers: put the lead's exact question in question_for_pierce and a short, natural holding reply in reply_text (e.g. "${config.discloseAi ? 'Good question, let me confirm that with Pierce and get right back to you.' : 'Good question, let me confirm that and get right back to you.'}"). Don't send a holding reply if one is already pending (see OPEN QUESTIONS).
+- action "ask_pierce" when you can't answer from facts/docs/approved answers: put the lead's exact question in question_for_pierce and a short, natural holding reply in reply_text (e.g. "${config.discloseAi ? 'Good question, let me confirm that with Pierce and get right back to you.' : "Great question, I'll get back to you on that."}"). Don't send a holding reply if one is already pending (see OPEN QUESTIONS).
 - action "no_reply" if nothing needs saying (e.g. "thanks", "ok", a thumbs-up after the call is booked).`;
 }
 
@@ -81,12 +94,12 @@ export function buildTranscript(messages) {
 
 export const SETTER_TOOL = {
   name: 'setter_decision',
-  description: 'Decide the next SMS and update the lead record.',
+  description: 'Decide the next message (text or email) and update the lead record.',
   input_schema: {
     type: 'object',
     properties: {
       action: { type: 'string', enum: ['reply', 'send_booking_link', 'booked', 'escalate', 'disqualify', 'ask_pierce', 'no_reply'] },
-      reply_text: { type: 'string', description: 'Exact SMS text to send. Empty if action is no_reply.' },
+      reply_text: { type: 'string', description: 'Exact text message or email body to send. Empty if action is no_reply.' },
       qualification: {
         type: 'object',
         description: 'Only fields learned so far. Omit unknowns.',
@@ -107,6 +120,9 @@ export const SETTER_TOOL = {
       summary: { type: 'string', description: 'One line for Pierce: who they are and where it stands.' },
       escalation_reason: { type: 'string' },
       question_for_pierce: { type: 'string', description: 'For ask_pierce: the exact question to put to Pierce.' },
+      needs_call: { type: 'boolean', description: 'True when a call with Pierce is the right next step (they asked, hot buyer, offer/negotiation, 1031 clock, tour request). Creates a call task for Pierce; you never call.' },
+      call_reason: { type: 'string', description: 'For needs_call: why the call matters, one line.' },
+      call_talking_points: { type: 'string', description: 'For needs_call: what Pierce should cover or ask, from what they said and gaps in their buy box.' },
     },
     required: ['action', 'reply_text', 'summary'],
   },

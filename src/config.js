@@ -36,11 +36,13 @@ export const config = {
 
   email: {
     mode: env.EMAIL_MODE || (env.MS_CLIENT_ID ? 'live' : 'off'), // live | mock | off
-    sendMode: env.EMAIL_SEND_MODE || 'draft', // draft = leave in Outlook Drafts for you; send = send after approval gate
+    // Pierce (Nov 2 2026): "just send, not draft." send = sends after the policy gate; draft = leaves it in Outlook Drafts
+    sendMode: env.EMAIL_SEND_MODE || 'send',
     tenantId: env.MS_TENANT_ID, clientId: env.MS_CLIENT_ID, clientSecret: env.MS_CLIENT_SECRET,
     mailbox: env.EMAIL_MAILBOX || 'pbrazil@cribrokerage.com',
     alwaysCc: list(env.EMAIL_ALWAYS_CC, ['DylanB@cricommercial.com']),
-    signatureHtml: env.EMAIL_SIGNATURE_HTML || '',
+    // Graph-sent mail gets no Outlook signature, so the bot appends this one (from Pierce's my-writing-style skill)
+    signatureHtml: env.EMAIL_SIGNATURE_HTML ?? 'Pierce Brazil<br>Senior Investment Associate<br>Commercial Real Estate Investors, Inc.<br>DRE #02247759 | CRI DRE #01807613<br>Direct (949) 335-5921<br>cribrokerage.com',
     maxAttachmentMb: num(env.EMAIL_MAX_ATTACHMENT_MB, 3),
     // read lead notifications (Crexi, LoopNet, ...) straight from the inbox: no Postmark, no forwarding rule
     pollLeads: bool(env.EMAIL_POLL_LEADS, true),
@@ -95,7 +97,9 @@ export const config = {
     email: env.OWNER_EMAIL || 'pbrazil@cribrokerage.com', // full Morning Broker Brief goes here
   },
   company: env.COMPANY_NAME || 'CRI Brokerage',
-  companyShort: env.COMPANY_SHORT || 'CRI', // how Pierce says it in a text: "this is Pierce over at CRI"
+  companyShort: env.COMPANY_SHORT || 'CRI Brokerage', // "this is Pierce over at CRI Brokerage" (elite-cre-sales skill)
+  // Pierce's skill: every outreach email carries this line
+  crexiProfileUrl: env.CREXI_PROFILE_URL || 'https://www.crexi.com/profile/pierce-brazil-piercebra',
   bookingLink: env.BOOKING_LINK || '',
   callWindows: env.CALL_WINDOWS || 'weekdays 9-10am or 2-4:30pm Pacific',
 
@@ -119,6 +123,12 @@ export const config = {
   firstTouchPerTick: num(env.FIRST_TOUCH_PER_TICK, 10),
   maxPendingApprovals: num(env.MAX_PENDING_APPROVALS, 5),
   followupDays: list(env.FOLLOWUP_DAYS, ['1', '3', '7']).map(Number),
+  // after day 7 (elite-cre-sales skill): every 2 weeks until day 91, then monthly, until they buy, say no or opt out.
+  // Long tail goes by EMAIL. Texts stop after day 7 unless NURTURE_SMS=true (repeated texts to a one-time inquirer
+  // draw carrier spam complaints and TCPA risk; email doesn't).
+  nurture: { everyDays: num(env.NURTURE_EVERY_DAYS, 14), untilDay: num(env.NURTURE_UNTIL_DAY, 91), monthlyDays: num(env.NURTURE_MONTHLY_DAYS, 30), sms: bool(env.NURTURE_SMS, false) },
+  // HubSpot call tasks for Pierce: hot = due now and he gets a text; otherwise due next business day at this hour
+  callTaskHour: num(env.CALL_TASK_HOUR, 9),
   maxMsgsPerLeadPerDay: num(env.MAX_MSGS_PER_LEAD_PER_DAY, 6),
   tickSeconds: num(env.TICK_SECONDS, 300),
 };

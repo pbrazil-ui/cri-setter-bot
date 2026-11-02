@@ -5,7 +5,8 @@
 import { config } from './config.js';
 
 export const mockMailbox = []; // EMAIL_MODE=mock (outbound)
-export const mockInbox = []; // EMAIL_MODE=mock (inbound): [{ id, receivedDateTime, from: { emailAddress: { address } }, subject, body: { contentType, content } }]
+export const mockInbox = []; // EMAIL_MODE=mock (inbound): [{ id, conversationId, receivedDateTime, from: { emailAddress: { address } }, subject, body: { contentType, content } }]
+export const mockSentItems = []; // EMAIL_MODE=mock: what Pierce sent by hand [{ conversationId, sentDateTime }]
 
 const E = config.email;
 let token = null; let exp = 0;
@@ -35,9 +36,19 @@ export async function mailCheck() {
 /** Inbox messages received at/after `sinceIso`, oldest first. Needs Mail.ReadWrite (already required). */
 export async function listInboxSince(sinceIso, top = 50) {
   if (E.mode === 'mock') return mockInbox.filter((m) => m.receivedDateTime >= sinceIso).sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime)).slice(0, top);
-  const q = new URLSearchParams({ $filter: `receivedDateTime ge ${sinceIso}`, $orderby: 'receivedDateTime asc', $top: String(top), $select: 'id,receivedDateTime,from,subject,body' });
+  const q = new URLSearchParams({ $filter: `receivedDateTime ge ${sinceIso}`, $orderby: 'receivedDateTime asc', $top: String(top), $select: 'id,conversationId,receivedDateTime,from,subject,body' });
   const r = await graph('GET', `/users/${encodeURIComponent(E.mailbox)}/mailFolders/inbox/messages?${q}`);
   return r?.value || [];
+}
+
+/** Has anything been sent from the mailbox in this conversation after `sinceIso`? (Pierce answered by hand.) */
+export async function sentInConversationSince(conversationId, sinceIso) {
+  if (!conversationId) return false;
+  if (E.mode === 'mock') return mockSentItems.some((m) => m.conversationId === conversationId && m.sentDateTime > sinceIso);
+  if (E.mode !== 'live') return false;
+  const q = new URLSearchParams({ $filter: `conversationId eq '${conversationId.replace(/'/g, "''")}'`, $select: 'sentDateTime', $top: '25' });
+  const r = await graph('GET', `/users/${encodeURIComponent(E.mailbox)}/mailFolders/sentitems/messages?${q}`);
+  return (r?.value || []).some((m) => m.sentDateTime > sinceIso);
 }
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

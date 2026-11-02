@@ -62,6 +62,9 @@ create table if not exists leads (
 create index if not exists leads_status_next on leads (status, next_action_at);
 -- Nov 1 2026: email-then-text first contact. Safe to re-run this whole file.
 alter table leads add column if not exists first_email_at timestamptz; -- first-contact email sent/drafted/queued; the text follows
+-- Nov 2 2026: call tasks for Pierce and the deal's next step
+alter table leads add column if not exists hubspot_tasks jsonb not null default '{}'::jsonb; -- key -> HubSpot task id (dedupe)
+alter table leads add column if not exists next_step text;                                     -- mirrors the deal's Next step
 create index if not exists leads_email on leads (lower(email));
 
 create table if not exists messages (

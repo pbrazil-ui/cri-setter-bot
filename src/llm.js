@@ -23,9 +23,9 @@ async function callTool({ model, system, content, tool, maxTokens = 800 }) {
  * Agent loop: the model may call document/math tools, then must finish with setter_decision.
  * executors = makeExecutors(ctx). Capped at 6 steps; last step forces the decision.
  */
-export async function runSetter({ lead, listing, messages, mode = 'reply', executors, kb = [], openQuestions = [] }) {
-  if (config.llmMode === 'mock') return mockSetter({ lead, listing, messages, mode, executors, kb, openQuestions });
-  const system = buildSystemPrompt({ lead, listing, mode, kb, openQuestions });
+export async function runSetter({ lead, listing, messages, mode = 'reply', executors, kb = [], openQuestions = [], followup = null, otherListings = [] }) {
+  if (config.llmMode === 'mock') return mockSetter({ lead, listing, messages, mode, executors, kb, openQuestions, followup });
+  const system = buildSystemPrompt({ lead, listing, mode, kb, openQuestions, followup, otherListings });
   const convo = [{ role: 'user', content: `Conversation so far:\n${buildTranscript(messages)}\n\nUse tools if you need facts or math, then call setter_decision.` }];
   const tools = executors ? [...AGENT_TOOLS, SETTER_TOOL] : [SETTER_TOOL];
   const MAX = 6;
@@ -139,7 +139,7 @@ const overlap = (a, b) => {
   const A = t(a); const B = t(b); return [...A].filter((w) => B.has(w)).length / Math.max(1, Math.min(A.size, B.size));
 };
 
-async function mockSetter({ lead, listing, messages, mode, executors, kb, openQuestions }) {
+async function mockSetter({ lead, listing, messages, mode, executors, kb, openQuestions, followup }) {
   const lastOut = [...messages].reverse().findIndex((m) => m.direction === 'out');
   const pending = (lastOut === -1 ? messages : messages.slice(messages.length - lastOut)).filter((m) => m.direction === 'in');
   const last = pending.map((m) => m.body).join(' ').toLowerCase() || [...messages].reverse().find((m) => m.direction === 'in')?.body?.toLowerCase() || '';
@@ -149,6 +149,9 @@ async function mockSetter({ lead, listing, messages, mode, executors, kb, openQu
     if (/looking for|want|need|\d+\s*(spaces|units|sites|pads)|\$\d/.test(last)) return { action: 'reply', reply_text: "Got it, I'll send over anything that fits.", qualification: { criteria: last }, summary: `Criteria (${sold ? 'sold' : 'under-contract'} listing inquiry)` };
     return { action: 'reply', reply_text: `That one is ${sold ? 'sold' : 'under contract'}, but I have other listings I can share. What are you looking for?`, summary: 'Off-market listing; asked criteria' };
   }
+  if (mode === 'followup' && followup?.step === 'nurture') return { action: 'reply', reply_text: `Hi${lead.first_name ? ` ${lead.first_name}` : ''}, are you still looking for MH or RV parks?`, summary: 'nurture' };
+  if (mode === 'followup' && followup?.step === 'still_looking') return { action: 'reply', reply_text: 'Still in the market for parks in NorCal?', summary: 'day 7' };
+  if (mode !== 'followup' && /\b(call me|give me a call|hop on a call|can we talk|phone call)\b/.test(last)) return { action: 'reply', reply_text: "Happy to hop on a call. What's a good time for you today or tomorrow?", needs_call: true, call_reason: 'asked for a call', summary: 'Wants a call' };
   if (mode === 'followup') return { action: 'reply', reply_text: lead.status === 'in_dd' ? 'Had a chance to go through the numbers? Happy to walk through anything.' : 'Quick follow-up: still worth a short call this week?', summary: 'follow-up' };
   if (/tuesday|monday|wednesday|thursday|friday|\d(am|pm)/.test(last)) return { action: 'booked', reply_text: "Perfect, I'll call you then.", qualification: { call_time: last }, qualified: true, summary: 'Call booked' };
   if (/not interested|no thanks/.test(last)) return { action: 'disqualify', reply_text: 'Understood, thanks for letting me know.', summary: 'Not interested' };
@@ -157,7 +160,7 @@ async function mockSetter({ lead, listing, messages, mode, executors, kb, openQu
   if (executors && /unit mix|how many|\brv\b|\bmh\b|occupan/.test(last)) {
     const s = await executors.rent_roll_stats({});
     if (s.locked) return { action: 'reply', reply_text: `That's in the rent roll, which opens up once the CA is signed: ${s.ca_link || '(CA link)'}`, summary: 'Asked unit mix pre-CA' };
-    if (!s.available) return { action: 'ask_pierce', question_for_pierce: last, reply_text: 'Let me confirm that and get right back to you.', summary: 'no rent roll' };
+    if (!s.available) return { action: 'ask_pierce', question_for_pierce: last, reply_text: "Great question, I'll get back to you on that.", summary: 'no rent roll' };
     const parts = Object.entries(s.by_type).map(([t, g]) => `${g.spaces} ${t} (${g.occupied} occupied, avg $${g.avg_rent_occupied})`);
     return { action: 'reply', reply_text: `Per the rent roll: ${s.total.spaces} spaces, ${parts.join(', ')}. ${s.total.occupancy_pct}% occupied overall.`, summary: 'Answered unit mix' };
   }
@@ -181,7 +184,7 @@ async function mockSetter({ lead, listing, messages, mode, executors, kb, openQu
     const best = (r.results || []).map((x) => ({ x, o: overlap(x.excerpt, last) })).sort((a, b) => b.o - a.o)[0];
     if (best && best.o >= 0.4) return { action: 'reply', reply_text: `Per ${best.x.file}: ${best.x.excerpt.split('\n').slice(1).join(' ').slice(0, 200)}`, summary: 'Answered from docs' };
     if (openQuestions.length) return { action: 'no_reply', reply_text: '', summary: 'waiting on Pierce' };
-    return { action: 'ask_pierce', question_for_pierce: pending.map((m) => m.body).join(' / '), reply_text: 'Good question, let me confirm that and get right back to you.', summary: 'Needs Pierce' };
+    return { action: 'ask_pierce', question_for_pierce: pending.map((m) => m.body).join(' / '), reply_text: "Great question, I'll get back to you on that.", summary: 'Needs Pierce' };
   }
   if (/thanks|ok\b|👍/.test(last)) return { action: 'no_reply', reply_text: '', summary: 'ack' };
   return { action: 'reply', reply_text: 'Thanks! How are you planning to fund it: cash, bank debt, or a 1031?', summary: 'Engaged' };

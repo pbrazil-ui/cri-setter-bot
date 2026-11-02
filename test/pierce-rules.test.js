@@ -57,13 +57,14 @@ test('first contact: email with links at 1-2 min, then a text 4-6 min later poin
   setNow(at(121)); await firstTouchTick();
   assert.equal(mockMailbox.length, 1, 'email by 2 minutes');
   const m = mockMailbox[0];
-  assert.match(m.text, /^Hi Jane,\n\nThanks for your inquiry on Lighthouse Resort on Crexi\./);
+  assert.match(m.text, /^Hi Jane,\n\nThanks for reaching out on Lighthouse Resort on Crexi\./);
   assert.match(m.text, /172 sites on the Delta/);
   assert.match(m.text, /Listing page: https:\/\/cri\.example\/lighthouse/);
   assert.match(m.text, /Lighthouse Resort Flyer: https:\/\/www\.dropbox\.com\/scl\/fi\/mock-fly1/); // public doc linked proactively
   assert.ok(!/mock-om1/.test(m.text), 'CA-gated OM is never linked before the CA');
-  assert.match(m.text, /The CA is here.*https:\/\/example\.com\/ca\b/);
-  assert.match(m.text, /do you own parks today, and how are you planning to finance\?/);
+  assert.match(m.text, /You can sign the NDA here to unlock the OM and data room: https:\/\/example\.com\/ca\b/);
+  assert.match(m.text, /You can see all of my current listings here: https:\/\/www\.crexi\.com\/profile\/pierce-brazil-piercebra/);
+  assert.match(m.text, /What does your buy box look like\?\n\nThank you,$/);
   assert.equal(toBuyer('+15305550101').length, 0, 'text waits for the email to land');
 
   setNow(at(121 + 239)); await firstTouchTick();
@@ -71,7 +72,7 @@ test('first contact: email with links at 1-2 min, then a text 4-6 min later poin
   setNow(at(121 + 391)); await firstTouchTick();
   const texts = toBuyer('+15305550101');
   assert.equal(texts.length, 1);
-  assert.equal(texts[0].text, 'Hey Jane, this is Pierce over at CRI. Just sent you an email with the info on Lighthouse Resort, so check your inbox when you get a chance. Let me know if you need anything else. Are you buying on your own or with a group?');
+  assert.equal(texts[0].text, "Hey Jane, this is Pierce over at CRI Brokerage! Just sent you an email with the info on Lighthouse Resort, so check your inbox when you get a chance. Happy to hop on a quick call if helpful. Are you buying on your own or with a group?");
   assert.equal((await db.findLeadByPhone('+15305550101')).status, 'contacted');
 });
 
@@ -95,9 +96,10 @@ test('text-only lead outside the send window: email-free lead texts at 8am; an e
 test('under contract (Walnut Estates): no documents, says so, asks what they want, and tells Pierce the criteria', async () => {
   await ingestEmail({ From: 'notifications@crexi.com', Subject: 'New lead', TextBody: 'Name: Al Buyer\nEmail: al@example.com\nPhone: 530-555-0177\nProperty: Walnut Estates\nMessage: send the OM' });
   const email = mockMailbox.at(-1).text;
-  assert.match(email, /about Walnut Estates\. It's under contract right now, but I have other listings I can share/);
+  assert.match(email, /on Walnut Estates\. It's under contract right now, but I have other listings that may fit\./);
+  assert.match(email, /pierce-brazil-piercebra/);
   assert.ok(!/example\.com\/ca2/.test(email), 'no CA link for a deal under contract');
-  assert.equal(toBuyer('+15305550177')[0].text, 'Hey Al, this is Pierce over at CRI. Thanks for your inquiry on Walnut Estates. That one is under contract, but I have other listings I can share. What are you looking for?');
+  assert.equal(toBuyer('+15305550177')[0].text, 'Hey Al, this is Pierce over at CRI Brokerage! Thanks for your inquiry on Walnut Estates. That one is under contract, but I have other listings that may fit: https://www.crexi.com/profile/pierce-brazil-piercebra What does your buy box look like?');
   await sms('+15305550177', 'can you send the rent roll?');
   await replyTick();
   assert.match(toBuyer('+15305550177').at(-1).text, /under contract, but I have other listings/);
@@ -187,7 +189,7 @@ test('LoopNet "saved your listing": email goes out, the text waits for Pierce\'s
   assert.equal(toBuyer('+19165550142').length, 0);
   const a = (await db.listPendingApprovals()).find((x) => x.policy === 'first_touch.favorite');
   assert.ok(a);
-  assert.match(a.draft, /^Hey Pat, this is Pierce over at CRI\. Saw you saved Lighthouse Resort on LoopNet and sent you an email/);
+  assert.match(a.draft, /^Hey Pat, this is Pierce over at CRI Brokerage! Saw you saved Lighthouse Resort on LoopNet and sent you an email/);
   await sms(PIERCE, `Y${a.id}`);
   assert.equal(toBuyer('+19165550142').length, 1);
 });
@@ -204,7 +206,7 @@ test('human pacing: Pierce\'s A# answer waits a random beat; two texts are never
   setNow(at(44)); await replyTick();
   assert.equal(toBuyer('+15305550101').length, 1, 'holding reply not within 45s of the last text');
   setNow(at(200)); await replyTick();
-  assert.match(toBuyer('+15305550101').at(-1).text, /let me confirm that and get right back to you/);
+  assert.match(toBuyer('+15305550101').at(-1).text, /Great question, I'll get back to you on that/);
   const n = toBuyer('+15305550101').length;
   setNow(at(600));
   await sms(PIERCE, `A${q.id} Private well, permitted.`);
@@ -231,7 +233,7 @@ test('lead emails are read straight from the inbox: platform senders only, each 
     { id: 'm2', receivedDateTime: at(-30), from: { emailAddress: { address: 'someone@gmail.com' } }, subject: 'Re: Crexi lead on Lighthouse', body: { contentType: 'text', content: 'Name: Not A Lead\nPhone: 530-555-0456\nProperty: Lighthouse Resort' } },
   );
   const r = await inboxTick();
-  assert.deepEqual(r, { seen: 2, leads: 1, ignored: 1 }); // the 2-hour-old one is before the 1-hour lookback
+  assert.deepEqual(r, { seen: 2, leads: 1, replies: 0, ignored: 1 }); // the 2-hour-old one is before the 1-hour lookback; gmail sender isn't a lead on file
   assert.ok(await db.findLeadByPhone('+15305550123'));
   assert.equal(await db.findLeadByPhone('+15305550456'), null);
   assert.equal(await db.findLeadByPhone('+15305550999'), null);

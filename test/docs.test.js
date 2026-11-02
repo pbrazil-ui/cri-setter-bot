@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 Object.assign(process.env, {
   NODE_ENV: 'test', FIRST_TOUCH_DELAY_MIN_SEC: '0', FIRST_TOUCH_DELAY_MAX_SEC: '0', TEXT_AFTER_EMAIL_MAX_SEC: '0', PACE_MAX_SEC: '0', MIN_GAP_SEC: '0', POLICY_TEST_MODE: '0', DB_MODE: 'memory', SMS_MODE: 'mock', LLM_MODE: 'mock', DROPBOX_MODE: 'mock',
   INGEST_SECRET: 'test', OWNER_PHONE: '+19495550000', HUBSPOT_TOKEN: '', AUTO_SEND_SOURCES: 'listing_email,inbound_sms,webhook',
-  EMAIL_MODE: 'mock', EMAIL_SEND_MODE: 'draft',
+  EMAIL_MODE: 'mock', EMAIL_SEND_MODE: 'send',
   REPLY_DELAY_MIN_SEC: '60', REPLY_DELAY_MAX_SEC: '300', REPLY_DELAY_CAP_SEC: '480',
 });
 
@@ -142,33 +142,34 @@ test('team-only Dropbox link: lead has an email -> OM attached to an Outlook dra
   assert.ok(ownerLog.some((t) => /needs .*Offering Memorandum.* by email/.test(t)));
 });
 
-test('email-only lead (no phone): first email goes out automatically (policy) as an Outlook draft with links, Dylan cc\'d', async () => {
+test('email-only lead (no phone): first email is sent automatically (policy) with links, Dylan cc\'d', async () => {
   const r = await ingestEmail({ From: 'leads@loopnet.com', Subject: 'LoopNet lead', TextBody: 'Name: Sam Fund\nEmail: sam@fund.com\nProperty: Lighthouse Resort\nMessage: Send details please' });
   assert.ok(r.created);
   const ft = r.firstTouch;
-  assert.ok(ft.draft, JSON.stringify(ft));
+  assert.ok(ft.sent, JSON.stringify(ft)); // send, not draft (Pierce, Nov 2 2026)
   const m = mockMailbox.at(-1);
   assert.equal(m.to, 'sam@fund.com');
   assert.deepEqual(m.cc, ['DylanB@cricommercial.com']);
   assert.match(m.subject, /Lighthouse Resort/);
   assert.match(m.text, /^Hi Sam,/);
-  assert.match(m.text, /The CA is here.*https:\/\/example\.com\/ca/);
-  assert.match(m.text, /buying on your own or with a group, do you own parks today, and how are you planning to finance\?/);
+  assert.match(m.text, /You can sign the NDA here to unlock the OM and data room: https:\/\/example\.com\/ca/);
+  assert.match(m.text, /You can see all of my current listings here: https:\/\/www\.crexi\.com\/profile\/pierce-brazil-piercebra/);
+  assert.match(m.text, /Does this one fit what you're looking for\? What does your buy box look like\?\n\nThank you,$/);
   assert.equal((await db.getLead(r.lead.id)).status, 'contacted');
   assert.ok(!/STOP/.test(m.text)); // SMS language never goes in an email
   assert.ok(!/Pierce Brazil\n|Senior Investment/.test(m.text)); // no signature; Outlook adds it
-  assert.ok(ownerLog.some((t) => /Outlook Drafts|Email draft ready/.test(t)));
+  assert.ok(!ownerLog.some((t) => /Outlook Drafts|Email draft ready/.test(t)), 'sent, not left as a draft');
 });
 
 test('unknown question -> holding reply -> Pierce answers with A# -> buyer gets it, bank remembers it', async () => {
   await sms(PIERCE, `CA${LEAD}`);
   await askAndWait('Is the marina lease assignable to a new owner?');
-  assert.match(lastTo(BUYER), /let me confirm that and get right back/);
+  assert.match(lastTo(BUYER), /Great question, I'll get back to you on that/);
   const q = ownerLog.find((t) => /^Q\d+ /.test(t));
   assert.match(q, /marina lease assignable/); assert.match(q, /Reply A\d+/);
   const qid = q.match(/^Q(\d+)/)[1];
   await askAndWait('Also, any update?');
-  assert.equal(mockOutbox.filter((m) => m.to === BUYER && /let me confirm that and get right back/.test(m.text)).length, 1); // no second holding reply
+  assert.equal(mockOutbox.filter((m) => m.to === BUYER && /Great question, I'll get back to you on that/.test(m.text)).length, 1); // no second holding reply
   await sms(PIERCE, `A${qid} Yes, State Lands allows assignment with their approval. Runs through 2030 and the buyer applies for a new lease after that.`);
   assert.match(lastTo(BUYER), /State Lands allows assignment/);
   assert.equal((await db.listQa(1)).length, 1);

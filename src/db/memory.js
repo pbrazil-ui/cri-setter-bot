@@ -27,7 +27,7 @@ export const db = {
     return t.leads.filter((l) => ((l.status === 'new' && l.phone) || (l.status === 'no_phone' && l.email)) && (!l.next_action_at || l.next_action_at <= ts())).slice(0, limit).map(clone);
   },
   async listLeadsAwaitingReply() {
-    return t.leads.filter((l) => ['contacted', 'engaged', 'qualified', 'in_dd'].includes(l.status) && l.last_outbound_at && (!l.last_inbound_at || l.last_outbound_at >= l.last_inbound_at)).map(clone);
+    return t.leads.filter((l) => ['contacted', 'engaged', 'qualified', 'in_dd', 'nurture'].includes(l.status) && l.last_outbound_at && (!l.last_inbound_at || l.last_outbound_at >= l.last_inbound_at)).map(clone);
   },
   async countByStatus() { return t.leads.reduce((a, l) => ({ ...a, [l.status]: (a[l.status] || 0) + 1 }), {}); },
 

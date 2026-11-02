@@ -6,10 +6,10 @@ import { now, hoursSince } from '../clock.js';
 import { sendSms } from '../ringcentral.js';
 import { runSetter, polishAnswer } from '../llm.js';
 import { makeExecutors } from './tools.js';
-import { sendEmail } from '../email.js';
+import { sendEmail, sentInConversationSince } from '../email.js';
 import { download, viewLink } from '../dropbox.js';
 import { classify, resolve, limits, audit, policies } from '../policy.js';
-import { optOutIntent, isStartKeyword, needsHuman, inWindow, nextWindowStart, cleanSms } from '../guardrails.js';
+import { optOutIntent, isStartKeyword, needsHuman, inWindow, nextWindowStart, cleanSms, claimsContact, asksForTour } from '../guardrails.js';
 import { notifyOwner, leadLabel } from '../notify.js';
 import * as hubspot from '../hubspot.js';
 import { platformPhrase } from '../platforms.js';
@@ -73,7 +73,8 @@ export function firstTouchText(lead, listing, { channel, afterEmail = false, lin
       : fav ? (afterEmail ? templates.favorite_after_email : templates.favorite)
         : afterEmail ? templates.sms_after_email
           : (templates[lead.source] || templates.default);
-  const smsLink = open && listing?.ca_link && !lead.ca_verified ? templates.sms_link.replace('{ca_link}', listing.ca_link) : '';
+  const smsLink = open && listing?.ca_link && !lead.ca_verified ? templates.sms_link.replace('{ca_link}', listing.ca_link) : templates.sms_link_profile;
+  const city = listing?.city && !propertyLabel(lead, listing).includes(listing.city) ? ` in ${listing.city}` : '';
   return tpl
     .replace('{first}', lead.first_name ? ` ${titleCase(lead.first_name.trim())}` : '')
     .replace('{who}', who)
@@ -81,7 +82,9 @@ export function firstTouchText(lead, listing, { channel, afterEmail = false, lin
     .replace('{platform}', platformPhrase(lead.platform))
     .replace('{availability}', availabilityPhrase(listing))
     .replace('{details}', emailDetails(listing, links))
-    .replace('{sms_link}', smsLink);
+    .replace('{sms_link}', smsLink)
+    .replace('{in_city}', city)
+    .replaceAll('{profile}', config.crexiProfileUrl);
 }
 
 async function approvalText(a, lead) {
@@ -166,6 +169,12 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
     return { skipped: 'rate_limit' };
   }
 
+  // The bot can't call: a draft claiming Pierce called / left a voicemail never goes out on its own.
+  if (['reply', 'followup', 'first_touch'].includes(kind) && claimsContact(text)) {
+    forceApproval = true;
+    reason = 'says Pierce called or left a voicemail; the bot cannot call';
+    await audit('blocked_false_claim', { leadId: lead.id, detail: { kind, text } });
+  }
   const key = classify({ kind, lead, flags, decision, human, channel: email ? 'email' : 'sms' });
   const pol = await resolve(key, { countAutoSendsLastHour: await db.countAutoSendsSince(new Date(+now() - 3600e3).toISOString()) });
   if (pol.mode === 'block') { await audit('policy_block', { leadId: lead.id, detail: { kind, policy: key } }); return { blocked: pol.reason }; }
@@ -248,6 +257,7 @@ export async function processFirstTouch(lead) {
   if (r.approval) await db.updateLead(lead.id, { status: 'awaiting_approval' });
   else if (r.deferred) await db.updateLead(lead.id, { next_action_at: new Date(+now() + 30 * 60e3).toISOString() });
   if (r.sent) await hubspot.addNote(lead.id, `First text sent: "${text}"`);
+  await syncNextStep(lead.id);
   return r;
 }
 
@@ -285,7 +295,34 @@ export async function handleInboundSms(phone, text, rcMessageId) {
     await notifyOwner(`${leadLabel(lead)} replied (your thread, bot muted): "${text}"`);
     return { forwarded: true };
   }
-  if (['new', 'awaiting_approval', 'contacted', 'disqualified', 'no_response'].includes(lead.status)) lead = await setStatus(lead, 'engaged');
+  if (['new', 'awaiting_approval', 'contacted', 'disqualified', 'no_response', 'nurture'].includes(lead.status)) lead = await setStatus(lead, 'engaged');
+  return queueReply(lead);
+}
+
+/** A buyer's email reply (from the inbox poller). Mirrors handleInboundSms; the answer goes back in the same thread. */
+export async function handleInboundEmail(lead, { id, conversationId, subject, text, receivedAt }) {
+  await db.insertMessage({ lead_id: lead.id, direction: 'in', channel: 'email', body: text.slice(0, 4000), status: 'received', meta: { graph_id: id, conversation_id: conversationId || null, received_at: receivedAt || null } });
+  await audit('received', { leadId: lead.id, detail: { channel: 'email', chars: text.length } });
+  await db.supersedeApprovalsForLead(lead.id);
+  await db.cancelScheduledForLead(lead.id);
+  lead = await db.updateLead(lead.id, {
+    last_inbound_at: receivedAt || iso(), followup_count: 0, email_last_message_id: id,
+    email_thread_subject: lead.email_thread_subject || String(subject || '').replace(/^(re|fw|fwd):\s*/i, '') || null,
+  });
+  const opt = optOutIntent(text.split('\n')[0]) || (/\b(unsubscribe|remove me|stop emailing|take me off)\b/i.test(text) ? 'phrase' : null);
+  if (opt) {
+    if (lead.phone) await db.addOptOut(lead.phone, `email:${opt}`);
+    await audit('opted_out', { leadId: lead.id, detail: { how: `email:${opt}` } });
+    await setStatus(lead, 'opted_out');
+    await hubspot.addNote(lead.id, `Opted out by email: "${text.slice(0, 200)}"`);
+    await syncNextStep(lead.id);
+    return { optedOut: opt };
+  }
+  if (MUTED.has(lead.status)) {
+    await notifyOwner(`${leadLabel(lead)} emailed (your thread, bot muted): "${text.slice(0, 300)}"`);
+    return { forwarded: true };
+  }
+  if (['new', 'no_phone', 'awaiting_approval', 'contacted', 'disqualified', 'no_response', 'nurture'].includes(lead.status)) lead = await setStatus(lead, 'engaged');
   return queueReply(lead);
 }
 
@@ -318,18 +355,26 @@ export async function respondNow(lead) {
   const messages = await db.listMessages(lead.id);
   const lastOutIdx = messages.map((m) => m.direction).lastIndexOf('out');
   const inboundText = messages.slice(lastOutIdx + 1).filter((m) => m.direction === 'in').map((m) => m.body).join('\n');
+  // reply on the channel they used
+  const lastIn = [...messages].reverse().find((m) => m.direction === 'in');
+  const channel = lastIn?.channel === 'email' && lead.email ? 'email' : lead.phone ? 'sms' : 'email';
+  // email thread: if Pierce already answered by hand since their email, stay out of it
+  if (channel === 'email' && lastIn?.meta?.conversation_id && (await sentInConversationSince(lastIn.meta.conversation_id, lastIn.meta.received_at || lastIn.created_at))) {
+    await audit('skipped_pierce_replied', { leadId: lead.id, detail: { conversation: lastIn.meta.conversation_id } });
+    return { skipped: 'pierce_replied' };
+  }
   const ctx = { lead, listing, flags: { usedSensitive: false, links: [], needsAttachment: [] } };
   let d;
   try {
     d = await runSetter({
-      lead, listing, messages, mode: 'reply', executors: makeExecutors(ctx),
+      lead: { ...lead, preferred_channel: channel }, listing, messages, mode: 'reply', executors: makeExecutors(ctx),
       kb: await db.listQa(listing?.id ?? null), openQuestions: await db.listOpenOwnerQuestions(lead.id),
     });
   } catch (e) {
     await notifyOwner(`Bot error on ${leadLabel(lead)}: ${e.message}\nThey said: "${inboundText}" — reply manually.`);
     return { error: e.message };
   }
-  return applyDecision(lead, d, { inboundText, kind: 'reply', flags: ctx.flags });
+  return applyDecision(lead, d, { inboundText, kind: 'reply', flags: ctx.flags, channel });
 }
 
 /** Pierce answered an open question (A12 ...): save it for future buyers, reply to this one. */
@@ -346,7 +391,7 @@ export async function answerOwnerQuestion(id, answer) {
   return { lead, ...r };
 }
 
-export async function applyDecision(lead, d, { inboundText = '', kind = 'reply', flags = {} } = {}) {
+export async function applyDecision(lead, d, { inboundText = '', kind = 'reply', flags = {}, channel } = {}) {
   const prevCriteria = lead.qualification?.criteria;
   const qualification = { ...(lead.qualification || {}), ...(d.qualification || {}) };
   d._prevStatus = lead.status;
@@ -367,12 +412,19 @@ export async function applyDecision(lead, d, { inboundText = '', kind = 'reply',
   }
   if (nextStatus === 'booked') {
     await notifyOwner(`BOOKED: ${leadLabel(lead)} — ${qualification.call_time || 'time TBD'}. ${d.summary || ''}\nSend the calendar invite.`);
-    await hubspot.addNote(lead.id, `Call booked: ${qualification.call_time || 'TBD'}. ${d.summary || ''} Qualification: ${JSON.stringify(qualification)}`);
+    await hubspot.addNote(lead.id, verifiedBuyerNote(lead, listingNow, `Call booked: ${qualification.call_time || 'time TBD'}`));
+    await callTask(lead, { key: 'booked', why: `Call booked for ${qualification.call_time || 'a time TBD'}`, hot: true, notify: false, talkingPoints: d.call_talking_points });
   } else if (nextStatus === 'qualified') {
-    await hubspot.addNote(lead.id, `Qualified by text. ${d.summary || ''} ${JSON.stringify(qualification)}`);
+    await hubspot.addNote(lead.id, verifiedBuyerNote(lead, listingNow, d.summary || 'Qualified'));
   } else if (nextStatus === 'escalated' || nextStatus === 'disqualified') {
     await hubspot.addNote(lead.id, `${nextStatus}: ${d.escalation_reason || d.summary || ''}`);
   }
+  // calls are Pierce's: the bot sets them up as HubSpot tasks (elite-cre-sales skill, section 0)
+  const today = iso().slice(0, 10);
+  if (nextStatus === 'escalated') await callTask(lead, { key: `escalated:${today}`, why: d.escalation_reason || 'needs your judgment (price, terms or legal)', hot: true, notify: false, talkingPoints: d.call_talking_points });
+  else if (asksForTour(inboundText)) await callTask(lead, { key: 'tour', why: 'asked about a tour (bot never schedules tours)', hot: true, talkingPoints: d.call_talking_points });
+  else if (d.needs_call) await callTask(lead, { key: `call:${today}`, why: d.call_reason || 'a call is the right next step', hot: true, talkingPoints: d.call_talking_points });
+  if (qualification.exchange_deadline && !lead.hubspot_tasks?.['1031']) await callTask(lead, { key: '1031', why: `1031 clock: ${qualification.exchange_deadline}`, hot: true, talkingPoints: d.call_talking_points });
 
   if (d.action === 'ask_pierce') {
     const listing = await getListing(lead);
@@ -388,52 +440,193 @@ export async function applyDecision(lead, d, { inboundText = '', kind = 'reply',
 
   if (d.action === 'no_reply' || !d.reply_text?.trim()) {
     if (d.action === 'escalate') await notifyOwner(`ESCALATED ${leadLabel(lead)}: ${d.escalation_reason || d.summary}\nThey said: "${inboundText}"`);
+    await syncNextStep(lead.id);
     return { action: d.action };
   }
   const human = needsHuman(inboundText);
   const r = await deliver(lead, d.reply_text, {
-    kind, flags, decision: d, human,
+    kind, flags, decision: d, human, channel,
     attachments: flags.needsAttachment || [],
     reason: d.escalation_reason || (human ? 'sensitive topic (price/terms/legal)' : flags.usedSensitive ? 'answer uses sensitive docs (inspections/water/leases)' : undefined),
   });
   if (flags.links?.length && (r.sent || r.scheduled)) await hubspot.addNote(lead.id, `Sent view-only link(s): ${flags.links.map((l) => l.doc).join(', ')}`);
+  await syncNextStep(lead.id);
   return { action: d.action, ...r };
 }
 
+// ---------- call tasks, CRM logging, next step ----------
+const fullName = (lead) => [lead.first_name, lead.last_name].filter(Boolean).map(titleCase).join(' ') || 'Buyer';
+const BUY_BOX = [['criteria', 'Buy box'], ['buyer_type', 'Buyer type'], ['owns_parks', 'Owns'], ['financing', 'Capital'], ['equity', 'Equity'], ['proof_of_funds', 'POF'], ['exchange_deadline', '1031'], ['timeline', 'Timeline'], ['decision_maker', 'Decision-maker']];
+const buyBox = (q = {}) => BUY_BOX.filter(([k]) => q[k]).map(([k, label]) => `${label}: ${q[k]}`).join('; ');
+function defaultTalkingPoints(q = {}) {
+  const ask = [];
+  if (!q.criteria) ask.push('What does your buy box look like (asset, size, price, markets)?');
+  if (!q.financing) ask.push('How are you financing: cash, bank debt, seller carry, 1031?');
+  if (!q.timeline) ask.push('Timeline, and who else is involved in the decision?');
+  ask.push('If I found the right deal in that box, how fast could you move?');
+  return ask.join(' ');
+}
+
+/** HubSpot "verified buyer" note (elite-cre-sales skill, section 10): property, buy box, capital, timeline, next step. */
+function verifiedBuyerNote(lead, listing, nextStepText) {
+  const q = lead.qualification || {};
+  return [
+    `Verified buyer: ${fullName(lead)}${lead.company ? ` (${lead.company})` : ''}`,
+    `Property: ${propertyLabel(lead, listing)}`,
+    `Buy box: ${q.criteria || 'not stated yet'}${q.buyer_type ? `; ${q.buyer_type}` : ''}${q.owns_parks ? `; owns ${q.owns_parks}` : ''}`,
+    `Capital: ${[q.financing, q.equity && `equity ${q.equity}`, q.proof_of_funds && `POF ${q.proof_of_funds}`].filter(Boolean).join(', ') || 'not stated yet'}`,
+    `Timeline: ${[q.timeline, q.exchange_deadline && `1031 ${q.exchange_deadline}`].filter(Boolean).join(', ') || 'not stated yet'}`,
+    `Decision-maker: ${q.decision_maker || 'not stated yet'}`,
+    `Next step: ${nextStepText}`,
+  ].join('\n');
+}
+
+/** Next business day at CALL_TASK_HOUR, Pierce's time. */
+const nextBusinessMorning = () => {
+  const from = new Date(+now() + 16 * 3600e3); from.setUTCMinutes(0, 0, 0); // on the hour, not 9:06
+  return nextWindowStart({ start: config.callTaskHour, end: config.callTaskHour + 1, days: [1, 2, 3, 4, 5] }, from);
+};
+
+/**
+ * The bot can't call, so a call becomes a HubSpot task for Pierce with everything he needs. Hot = due now and he
+ * gets a text; otherwise due next business morning. Once per lead per key. If HubSpot is off or fails, he gets a text.
+ */
+export async function callTask(lead, { key, why, hot = false, notify = true, talkingPoints }) {
+  lead = await db.getLead(lead.id);
+  if (lead.hubspot_tasks?.[key]) return lead.hubspot_tasks[key];
+  const listing = await getListing(lead);
+  const said = (await db.listMessages(lead.id)).filter((m) => m.direction === 'in').slice(-3).map((m) => `"${m.body.slice(0, 200)}"`);
+  const prop = propertyLabel(lead, listing);
+  const body = [
+    `Why: ${why}`,
+    `Phone: ${lead.phone || 'none'} · Email: ${lead.email || 'none'}`,
+    `Property: ${prop}${listing && !isAvailable(listing) ? ` (${availabilityPhrase(listing)})` : ''}`,
+    `They said: ${said.join(' / ') || 'nothing yet'}`,
+    `Buy box: ${buyBox(lead.qualification) || 'unknown'}`,
+    `Talking points: ${talkingPoints || defaultTalkingPoints(lead.qualification)}`,
+  ].join('\n');
+  const dueAt = (hot ? now() : nextBusinessMorning()).toISOString();
+  const id = await hubspot.createTask(lead.id, { key, subject: `Call ${fullName(lead)} re ${prop}`, body, dueAt, priority: hot ? 'HIGH' : 'MEDIUM' });
+  if (!id) await db.updateLead(lead.id, { hubspot_tasks: { ...(lead.hubspot_tasks || {}), [key]: 'texted' } });
+  if (!id || (hot && notify)) await notifyOwner(`CALL ${leadLabel(lead)} ${lead.phone || ''}: ${why}.${id ? ' Task is in HubSpot.' : `\n${body}`}`);
+  await audit('call_task', { leadId: lead.id, detail: { key, hot, hubspot_task: id || null, why } });
+  return id;
+}
+
+const localDay = (d) => new Date(d).toLocaleDateString('en-US', { timeZone: config.timezone, weekday: 'short', month: 'short', day: 'numeric' });
+
+/** One line for the deal's Next step field. No lead ever sits without a next action. */
+export async function describeNextStep(lead) {
+  const q = lead.qualification || {};
+  switch (lead.status) {
+    case 'new': return 'First email and text going out now';
+    case 'no_phone': return 'First email going out now';
+    case 'awaiting_approval': return 'First message waiting on Pierce\'s Y';
+    case 'booked': return `Pierce: call ${q.call_time || '(time TBD)'}`;
+    case 'escalated': return 'Pierce: respond (price, terms, legal or a judgment call)';
+    case 'human': return 'Pierce owns this thread';
+    case 'opted_out': case 'wrong_number': return 'None: opted out. Do not contact.';
+    case 'disqualified': return 'None: not a buyer';
+    case 'no_response': return 'None: no reply after the full cadence';
+    default: break;
+  }
+  if (lead.reply_due_at) return 'Bot replying now';
+  const open = await db.listOpenOwnerQuestions(lead.id);
+  if (open.length) return `Pierce: answer Q${open[0].id}, then bot replies`;
+  if (lead.last_inbound_at && (!lead.last_outbound_at || lead.last_inbound_at > lead.last_outbound_at)) return 'Bot replying now';
+  const plan = followupPlan(lead);
+  if (plan?.dueAt) return `Bot follow-up by ${plan.channel === 'email' ? 'email' : 'text'} ${localDay(plan.dueAt)} if no reply`;
+  return lead.status === 'in_dd' ? 'Pierce: decide on a personal call (DD follow-ups done)' : 'Bot closes out or moves to the long-term email list';
+}
+
+export async function syncNextStep(leadId) {
+  const lead = await db.getLead(leadId);
+  if (!lead) return;
+  const text = await describeNextStep(lead);
+  if (text === lead.next_step) return;
+  await db.updateLead(leadId, { next_step: text });
+  await hubspot.setNextStep(leadId, text);
+}
+
 // ---------- follow-ups ----------
+const STEP_GUIDE = {
+  second_touch: 'Day 1, second touch: a quick note. Point them to the email or the NDA link and ask one question.',
+  value_touch: 'Day 3, value touch: one relevant, verified fact about the listing (use the tools) or another active listing that fits, then one question.',
+  still_looking: 'Day 7: "Still in the market for [asset type] in [market]?" Use what you know of their buy box.',
+  nurture: 'Long-term touch: one of the other active listings that fits their buy box (from OTHER ACTIVE LISTINGS), or if nothing fits, the 9-word email: "Hi [First], are you still looking for MH or RV parks?"',
+};
+const DAY = 864e5;
+
+/**
+ * Next follow-up for a lead waiting on their reply: { dueAt, channel, step } or { done } or null.
+ * Pre-CA: days 1, 3, 7 (text and email alternate when we have both), then long-term by email every 2 weeks to
+ * day 91 and monthly after (elite-cre-sales skill). In DD: days 2, 5, 10, 21, then Pierce decides.
+ */
+export function followupPlan(lead) {
+  if (!lead.last_outbound_at) return null;
+  const emailOk = !!lead.email && config.email.mode !== 'off';
+  const smsOk = !!lead.phone;
+  const last = +new Date(lead.last_outbound_at);
+  const n = lead.followup_count || 0;
+  if (lead.status === 'nurture') {
+    const age = (+now() - +new Date(lead.created_at || lead.last_outbound_at)) / DAY;
+    const channel = emailOk ? 'email' : config.nurture.sms && smsOk ? 'sms' : null;
+    if (!channel || (channel === 'sms' && age >= config.nurture.untilDay)) return { done: 'no_channel' };
+    const gap = age < config.nurture.untilDay ? config.nurture.everyDays : config.nurture.monthlyDays;
+    return { dueAt: new Date(last + gap * DAY), channel, step: 'nurture' };
+  }
+  const dd = lead.status === 'in_dd';
+  const days = dd ? config.followupDaysDd : config.followupDays;
+  if (n >= days.length) return { done: dd ? 'dd_done' : 'cadence_done' };
+  const channel = emailOk && smsOk ? (n % 2 === 1 ? 'email' : 'sms') : smsOk ? 'sms' : 'email';
+  const step = dd ? 'dd' : ['second_touch', 'value_touch', 'still_looking'][n] || 'still_looking';
+  return { dueAt: new Date(last + (days[n] - (n > 0 ? days[n - 1] : 0)) * DAY), channel, step };
+}
+
 export async function runFollowups() {
   if (!inWindow(config.sendWindow)) return { skipped: 'outside_window' };
   const results = [];
+  const others = (await db.listListings()).filter((l) => isAvailable(l));
   for (const lead of await db.listLeadsAwaitingReply()) {
     if ((await db.listOpenOwnerQuestions(lead.id)).length) continue; // ball is in Pierce's court, not the buyer's
+    const plan = followupPlan(lead);
+    if (!plan) continue;
     const n = lead.followup_count || 0;
-    const dd = lead.status === 'in_dd';
-    const days = dd ? config.followupDaysDd : config.followupDays;
-    if (dd && n >= days.length) {
+    if (plan.done === 'dd_done') {
       // never auto-close a buyer reviewing DD; tell Pierce once
-      if (n === days.length) { await notifyOwner(`${leadLabel(lead)} has gone quiet in DD after ${days.length} follow-ups. Your call: a personal call, or let it rest.`); await db.updateLead(lead.id, { followup_count: n + 1 }); }
+      if (n === config.followupDaysDd.length) { await notifyOwner(`${leadLabel(lead)} has gone quiet in DD after ${n} follow-ups. Your call: a personal call, or let it rest.`); await db.updateLead(lead.id, { followup_count: n + 1 }); await syncNextStep(lead.id); }
       continue;
     }
-    if (n >= days.length) {
-      if (hoursSince(lead.last_outbound_at) >= 48) {
-        await setStatus(lead, 'no_response');
-        await hubspot.addNote(lead.id, 'No reply after full follow-up cadence. Closed out by setter bot.');
-        results.push({ id: lead.id, closed: true });
-      }
+    if (plan.done) {
+      if (hoursSince(lead.last_outbound_at) < 48) continue;
+      const canNurture = lead.status !== 'nurture' && ((lead.email && config.email.mode !== 'off') || (config.nurture.sms && lead.phone));
+      await setStatus(lead, canNurture ? 'nurture' : 'no_response');
+      await hubspot.addNote(lead.id, canNurture ? 'No reply after day 7. Moved to the long-term list: listing emails every 2 weeks to 3 months, then monthly, until they reply or opt out.' : 'No reply after full follow-up cadence. Closed out by setter bot.');
+      await syncNextStep(lead.id);
+      results.push({ id: lead.id, [canNurture ? 'nurture' : 'closed']: true });
       continue;
     }
-    const gapHours = (days[n] - (n > 0 ? days[n - 1] : 0)) * 24;
-    if (hoursSince(lead.last_outbound_at) < gapHours) continue;
+    if (now() < plan.dueAt) continue;
+    // a quiet lead after the first touch gets a call task for Pierce (next business morning), plus the follow-up note
+    if (n === 0 && lead.status !== 'nurture' && lead.phone) await callTask(lead, { key: 'no_reply', why: 'no reply to the first email/text yet', hot: false });
     const listing = await getListing(lead);
     const messages = await db.listMessages(lead.id);
     const ctx = { lead, listing, flags: { usedSensitive: false, links: [], needsAttachment: [] } };
     let d;
-    try { d = await runSetter({ lead, listing, messages, mode: 'followup', executors: makeExecutors(ctx), kb: await db.listQa(listing?.id ?? null) }); } catch (e) { console.error('[followup]', e.message); continue; }
+    try {
+      d = await runSetter({
+        lead: { ...lead, preferred_channel: plan.channel }, listing, messages, mode: 'followup', executors: makeExecutors(ctx),
+        kb: await db.listQa(listing?.id ?? null), followup: { step: plan.step, guide: STEP_GUIDE[plan.step] || '', number: n + 1 },
+        otherListings: others.filter((l) => l.id !== listing?.id).map((l) => ({ name: publicListingName(l.name), city: l.city, summary: l.summary, crexi: l.crexi_url || l.hub_url })),
+      });
+    } catch (e) { console.error('[followup]', e.message); continue; }
     if (!d.reply_text?.trim() || d.action === 'no_reply') continue;
-    const r = await deliver(lead, d.reply_text, { kind: 'followup' });
-    if (r.sent) await db.updateLead(lead.id, { followup_count: n + 1 });
+    const r = await deliver(lead, d.reply_text, { kind: 'followup', channel: plan.channel });
+    if (r.sent || r.scheduled || r.draft) await db.updateLead(lead.id, { followup_count: n + 1, ...(r.draft || r.scheduled ? { last_outbound_at: iso() } : {}) });
     if (r.approval) await db.updateLead(lead.id, { followup_count: n + 1, last_outbound_at: iso() }); // don't re-draft every tick
-    results.push({ id: lead.id, ...r });
+    if (d.needs_call) await callTask(lead, { key: `call:${iso().slice(0, 10)}`, why: d.call_reason || 'a call is the right next step', hot: true, talkingPoints: d.call_talking_points });
+    await syncNextStep(lead.id);
+    results.push({ id: lead.id, step: plan.step, channel: plan.channel, ...r });
   }
   return results;
 }
