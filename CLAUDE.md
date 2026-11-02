@@ -39,7 +39,7 @@ Levels 1/2/3 from Pierce's instructions. Every outbound passes `classify()` → 
 - `src/db/` `supabase.js` (prod) / `memory.js` (tests), same interface · `supabase/schema.sql`
 
 ## Commands
-- `npm install && npm test` (69 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
+- `npm install && npm test` (70 tests; in-memory DB, mock SMS/LLM/Dropbox/email, fake HubSpot. No accounts needed.)
 - `npm run dev` local server, all mocks, :3000
 - `open "$PUBLIC_URL/admin/selftest?key=$INGEST_SECRET"` after any deploy or key change: every check should be ok
 - `curl -X POST "$PUBLIC_URL/admin/sync-docs?key=$INGEST_SECRET"` force a Dropbox sync

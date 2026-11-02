@@ -331,3 +331,31 @@ test('HubSpot 403 (service key missing a scope): Pierce is told once per object,
     assert.ok(toBuyer().length >= 2, 'buyer still answered');
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('Dropbox no-argument calls send the JSON body null (an empty body is rejected), and 5xx is retried once', async () => {
+  const { dropboxCheck } = await import('../src/dropbox.js');
+  const { config: cfg } = await import('../src/config.js');
+  const realFetch = globalThis.fetch; const calls = [];
+  let failedOnce = false;
+  globalThis.fetch = async (url, o = {}) => {
+    const u = new URL(url); calls.push({ path: u.pathname, body: o.body, ct: o.headers?.['Content-Type'] });
+    const ok = (j) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => j, text: async () => JSON.stringify(j) });
+    if (u.pathname === '/oauth2/token') return ok({ access_token: 't', expires_in: 14400 });
+    if (u.pathname === '/2/users/get_current_account') {
+      if (!failedOnce) { failedOnce = true; return { ok: false, status: 500, headers: { get: () => '0' }, text: async () => 'unexpected error occurred' }; }
+      return ok({ email: 'pbrazil@cricommercial.com', root_info: { root_namespace_id: '12987598657' } });
+    }
+    if (u.pathname === '/2/files/list_folder') return ok({ entries: [{ '.tag': 'folder', name: 'Lighthouse Resort - Isleton, CA' }], has_more: false });
+    return realFetch(url, o);
+  };
+  const saved = { ...cfg.dropbox };
+  Object.assign(cfg.dropbox, { mode: 'live', appKey: 'k', appSecret: 's', refreshToken: 'r' });
+  try {
+    const r = await dropboxCheck('/Brokerage/01 - Brokerage/Deals/01 - Listed');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const acct = calls.filter((c) => c.path === '/2/users/get_current_account');
+    assert.equal(acct.length >= 2, true, 'retried after the 500');
+    for (const c of acct) { assert.equal(c.body, 'null'); assert.equal(c.ct, 'application/json'); }
+    assert.equal(r.root_namespace, '12987598657');
+  } finally { globalThis.fetch = realFetch; Object.assign(cfg.dropbox, saved); }
+});

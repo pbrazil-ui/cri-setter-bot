@@ -32,7 +32,14 @@ async function rpc(endpoint, body, { withRoot = true } = {}) {
   assertDropboxAllowed(endpoint);
   const headers = { Authorization: `Bearer ${await getToken()}`, 'Content-Type': 'application/json' };
   if (withRoot && pathRoot) headers['Dropbox-API-Path-Root'] = asciiJson({ '.tag': 'root', root: pathRoot });
-  const res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, { method: 'POST', headers, body: body === null ? null : JSON.stringify(body) });
+  // No-argument endpoints (users/get_current_account) take the JSON literal null, not an empty body: Dropbox
+  // rejects an empty application/json body. JSON.stringify(null) === 'null'. One retry on 429/5xx.
+  const init = { method: 'POST', headers, body: JSON.stringify(body ?? null) };
+  let res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, init);
+  if (res.status === 429 || res.status >= 500) {
+    await new Promise((r) => setTimeout(r, Number(res.headers?.get?.('Retry-After')) * 1000 || 2000));
+    res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, init);
+  }
   const text = await res.text();
   if (!res.ok) { const e = new Error(`Dropbox ${endpoint} ${res.status}: ${text.slice(0, 300)}`); e.body = text; throw e; }
   return text ? JSON.parse(text) : null;
