@@ -63,3 +63,22 @@ test('document rules: broker-internal, lead lists, a buyer\'s proof of funds, fi
   };
   for (const [p, tier] of Object.entries(keep)) assert.equal(classifyFile(p).tier, tier, p);
 });
+
+test('email history: past threads are matched to listings without Graph $search (403 under RBAC)', async () => {
+  const { matchMessagesToListings } = await import('../src/docs/history.js');
+  const listings = [
+    { id: 3, name: 'Lighthouse Resort', aliases: [] },
+    { id: 16, name: 'Boon Chan - Hacienda Mobile Park', aliases: ['Mobile Hacienda Park'] },
+    { id: 9, name: 'NorCal Portfolio', aliases: [] },
+  ];
+  const msgs = [
+    { id: 'a', conversationId: 'c1', subject: 'RE: Lighthouse Resort - rent roll', body: { content: 'see attached' } },
+    { id: 'b', conversationId: 'c2', subject: 'Question', body: { content: 'Is Mobile Hacienda Park still available?' } },
+    { id: 'c', conversationId: 'c3', subject: 'Lunch?', body: { content: 'lighthouses are cool; resort weekend' } },
+    { id: 'd', conversationId: 'c4', subject: 'Hacienda Mobile Park numbers', body: { content: '' } },
+  ];
+  const m = matchMessagesToListings(msgs, listings);
+  assert.deepEqual((m.get(3) || []).map((x) => x.id), ['a']);
+  assert.deepEqual((m.get(16) || []).map((x) => x.id).sort(), ['b', 'd'], 'alias and seller-stripped deal name both match');
+  assert.equal(m.get(9), undefined);
+});
