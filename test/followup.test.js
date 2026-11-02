@@ -205,7 +205,7 @@ test('Pierce\'s skills are in every prompt, with the no-calls rule on top', () =
   assert.ok(p.indexOf('You CANNOT make phone calls') < p.indexOf('Elite CRE Sales Skill'), 'code rules come before the skills');
   assert.match(config.email.signatureHtml, /DRE #02247759/);
   // Pierce's exact signature (Nov 2 2026): CRI Brokerage, Direct: 949.335.5921, Dupont address, confidentiality notice
-  for (const part of ['Senior Investment Associate<br>CRI Brokerage', 'Direct: 949.335.5921', '2152 Dupont Dr, Suite 270<br>Irvine, CA 92612', 'cribrokerage.com', 'CONFIDENTIAL COMMUNICATION', 'destroy your copy of the email.']) {
+  for (const part of ['<b>Pierce Brazil</b><br>Senior Investment Associate<br>CRI Brokerage', 'Direct: 949.335.5921<br><br>2152 Dupont Dr', 'Irvine, CA 92612<br><br>Website', 'Direct: 949.335.5921', '2152 Dupont Dr, Suite 270<br>Irvine, CA 92612', 'cribrokerage.com', 'CONFIDENTIAL COMMUNICATION', 'destroy your copy of the email.']) {
     assert.ok(config.email.signatureHtml.includes(part), `signature has "${part}"`);
   }
   assert.ok(!/Commercial Real Estate Investors, Inc\./.test(config.email.signatureHtml), 'old signature line is gone');

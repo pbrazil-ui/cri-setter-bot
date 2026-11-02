@@ -7,13 +7,17 @@ const list = (v, d) => (v ? String(v).split(',').map((s) => s.trim()).filter(Boo
 
 // Pierce's email signature, verbatim as he sent it (Nov 2 2026: "use this email signature for communications").
 // Appended to every email the bot SENDS (Graph mail gets no Outlook signature). Override with EMAIL_SIGNATURE_HTML.
-const SIG_SMALL = 'font-size:11px;line-height:1.4;color:#666666';
+// Laid out exactly like his Outlook signature (his screenshot, Nov 2 2026): bold name, a blank line between blocks,
+// the notice in the same size and color as the rest.
+// Line breaks, not paragraph margins, make the spacing, so Outlook, Superhuman and phones all show the same gaps.
+const SIG_NOTICE = 'This electronic mail message and any attachments are private and confidential and are the property of the sender. The information contained in this electronic mail message is privileged and is intended only for the use of the individual(s) or entity(ies) named above. If you are not the intended recipient, be advised that any unauthorized disclosure, copying, distribution or the taking of any action in reliance on the contents of this information is strictly prohibited. If you have received this electronic mail message in error, please call the person at the number above, or notify me immediately at pbrazil@cribrokerage.com and delete the message and destroy your copy of the email.';
 export const PIERCE_SIGNATURE_HTML = [
-  '<p style="margin:0">Pierce Brazil<br>Senior Investment Associate<br>CRI Brokerage<br>DRE #02247759 | CRI DRE #01807613<br>Direct: 949.335.5921</p>',
-  '<p style="margin:12px 0 0">2152 Dupont Dr, Suite 270<br>Irvine, CA 92612</p>',
-  '<p style="margin:12px 0 0">Website: <a href="https://cribrokerage.com">cribrokerage.com</a></p>',
-  `<p style="margin:16px 0 0;${SIG_SMALL}"><b>CONFIDENTIAL COMMUNICATION</b></p>`,
-  `<p style="margin:6px 0 0;${SIG_SMALL}">This electronic mail message and any attachments are private and confidential and are the property of the sender. The information contained in this electronic mail message is privileged and is intended only for the use of the individual(s) or entity(ies) named above. If you are not the intended recipient, be advised that any unauthorized disclosure, copying, distribution or the taking of any action in reliance on the contents of this information is strictly prohibited. If you have received this electronic mail message in error, please call the person at the number above, or notify me immediately at pbrazil@cribrokerage.com and delete the message and destroy your copy of the email.</p>`,
+  '<div style="line-height:1.35">',
+  '<b>Pierce Brazil</b><br>Senior Investment Associate<br>CRI Brokerage<br>DRE #02247759 | CRI DRE #01807613<br>Direct: 949.335.5921<br><br>',
+  '2152 Dupont Dr, Suite 270<br>Irvine, CA 92612<br><br>',
+  'Website: <a href="https://cribrokerage.com">cribrokerage.com</a><br><br>',
+  `CONFIDENTIAL COMMUNICATION<br><br>${SIG_NOTICE.replace('pbrazil@cribrokerage.com', '<a href="mailto:pbrazil@cribrokerage.com">pbrazil@cribrokerage.com</a>')}`,
+  '</div>',
 ].join('');
 
 const autoSendSources = list(env.AUTO_SEND_SOURCES, ['listing_email', 'inbound_sms', 'webhook']);
