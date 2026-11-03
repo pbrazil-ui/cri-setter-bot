@@ -4,7 +4,7 @@ import { inWindow } from './guardrails.js';
 import { ensureSubscription } from './ringcentral.js';
 import { syncListingsFromHubSpot } from './hubspot.js';
 import { notifyOwner } from './notify.js';
-import { processFirstTouch, runFollowups, sendDueScheduled, isPaused, processDueReplies } from './agent/setter.js';
+import { processFirstTouch, runFollowups, sendDueScheduled, isPaused, processDueReplies, retryPendingIntroEmails } from './agent/setter.js';
 import { syncDropbox, setSyncGuard } from './docs/sync.js';
 import { sendMorningBrief } from './brief.js';
 import { importEmailHistory } from './docs/history.js';
@@ -22,6 +22,7 @@ export async function tick() {
   try {
     await sendDueScheduled();
     await firstTouchPass();
+    await retryPendingIntroEmails(); // intro emails held while HubSpot/RingCentral could not be checked
     if (inWindow(config.sendWindow) && !(await isPaused())) await runFollowups();
     return { ok: true };
   } catch (e) {

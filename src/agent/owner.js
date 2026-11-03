@@ -8,6 +8,7 @@ import { sendNow, scheduleSend, setStatus, answerOwnerQuestion, processFirstTouc
 import { matchListing, publicListingName } from '../listings.js';
 import * as hubspot from '../hubspot.js';
 import { audit } from '../policy.js';
+import { handBack } from '../contactguard.js';
 
 const HELP = `Setter bot commands:
 Y12 send draft #12 · YA send all pending
@@ -126,8 +127,22 @@ export async function handleOwnerCommand(raw) {
   if ((m = t.match(/^b\s*l?(\d+)$/i))) {
     const lead = await db.getLead(Number(m[1]));
     if (!lead) return notifyOwner(`No lead L${m[1]}.`);
+    // contact awareness: B# clears what the guard already saw (his texts, last contacted, the meeting he knows about),
+    // but a seller or a deal at Offer Out+ in HubSpot is never handed to the bot. He fixes HubSpot first if it's wrong.
+    const back = await handBack(lead);
+    if (back.refused) {
+      return notifyOwner(`${leadLabel(lead)} is still yours: ${back.why}. The bot stays off.${back.refused === 'seller' ? ' If HubSpot is wrong, fix the contact/deal there and text' : ' Text'} B${lead.id} again once that's changed.`);
+    }
+    const note = back.errors?.length ? ` (Couldn't reach ${back.errors.map((e) => e.split(':')[0]).join(' and ')} just now; the bot checks again before every message.)` : '';
+    const fresh = await db.getLead(lead.id);
+    // stepped back before the first email/text went: handing it back means "do what you would have done"
+    if (fresh.raw?.contact_guard?.kind === 'first_touch' && !fresh.last_outbound_at && !fresh.first_email_at && ['human', 'booked'].includes(fresh.status)) {
+      await setStatus(fresh, fresh.phone ? 'new' : 'no_phone', { next_action_at: now().toISOString() });
+      await notifyOwner(`Bot is back on ${leadLabel(lead)}: first email/text going out now.${note}`);
+      return processFirstTouch(fresh);
+    }
     await setStatus(lead, lead.status === 'booked' ? 'booked' : 'engaged');
-    return notifyOwner(`Bot is back on ${leadLabel(lead)}.`);
+    return notifyOwner(`Bot is back on ${leadLabel(lead)}.${back.errors?.length ? ` (Couldn't reach ${back.errors.map((e) => e.split(':')[0]).join(' and ')} just now; the bot checks again before every message.)` : ''}`);
   }
   return notifyOwner(`Didn't catch that. Text HELP for commands.`);
 }

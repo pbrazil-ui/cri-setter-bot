@@ -15,9 +15,16 @@ import * as hubspot from '../hubspot.js';
 import { platformPhrase } from '../platforms.js';
 import { publicListingName, isAvailable, availabilityPhrase } from '../listings.js';
 import { dataRoomProblem } from '../dataroom.js';
+import { checkBeforeSend } from '../contactguard.js';
 
 const templates = JSON.parse(readFileSync(new URL('../../playbook/templates.json', import.meta.url), 'utf8'));
 export const MUTED = new Set(['escalated', 'human', 'opted_out', 'wrong_number']);
+/**
+ * Muted = the bot neither replies nor follows up. A booked lead is Pierce's (Nov 2 2026: "don't text people in
+ * communication like Matthew, he booked a call") unless he handed it back with B# (raw.booked_bot_ok).
+ */
+export const isMuted = (lead) => MUTED.has(lead?.status) || (lead?.status === 'booked' && !lead.raw?.booked_bot_ok);
+const REPLY_RETRY_MS = 5 * 60e3;
 const iso = () => now().toISOString();
 /** Random whole seconds in [minSec, maxSec]: varied, never on a fixed beat. */
 export const randSec = ({ minSec, maxSec }) => (maxSec <= 0 ? 0 : Math.round(minSec + Math.random() * Math.max(0, maxSec - minSec)));
@@ -154,9 +161,9 @@ export async function sendNow(lead, text, kind, onSend = {}, attachments = [], c
   }
 }
 
-export async function scheduleSend(lead, text, kind, onSend = {}, { delaySec = 0 } = {}) {
+export async function scheduleSend(lead, text, kind, onSend = {}, { delaySec = 0, meta = {} } = {}) {
   const sendAt = new Date(Math.max(+nextWindowStart(config.replyWindow), +now() + delaySec * 1000));
-  await db.insertMessage({ lead_id: lead.id, direction: 'out', body: cleanSms(text), status: 'scheduled', kind, send_at: sendAt.toISOString(), meta: { on_send: onSend } });
+  await db.insertMessage({ lead_id: lead.id, direction: 'out', body: cleanSms(text), status: 'scheduled', kind, send_at: sendAt.toISOString(), meta: { ...meta, on_send: onSend } });
   return { scheduled: sendAt.toISOString() };
 }
 
@@ -164,12 +171,23 @@ export async function scheduleSend(lead, text, kind, onSend = {}, { delaySec = 0
  * The single gate every bot-written message passes through.
  * Order: opt-out -> per-lead rate limit -> policy (auto / approve / block) -> time window -> send.
  */
-export async function deliver(lead, text, { kind, forceApproval = false, reason, onSend = {}, attachments = [], flags = {}, decision = {}, human = false, channel, pace = false, quietFail = false }) {
+export async function deliver(lead, text, { kind, forceApproval = false, reason, onSend = {}, attachments = [], flags = {}, decision = {}, human = false, channel, pace = false, quietFail = false, meta = {} }) {
   const email = viaEmail(lead, channel);
   if (!text || !String(text).trim()) return { skipped: 'empty' };
   if (lead.phone && (await db.isOptedOut(lead.phone))) return { skipped: 'opted_out' };
   if (!lead.phone && !lead.email) return { skipped: 'no_contact' };
   if (email ? !lead.email : !lead.phone) return { skipped: 'no_contact' };
+
+  // Contact awareness: anything the bot wrote on its own (not Pierce's A# answer) first checks HubSpot and RingCentral
+  // for a seller, a booked meeting, Pierce already in touch, or a deal past Offer Out (src/contactguard.js).
+  if (kind !== 'answer') {
+    const g = await checkBeforeSend(lead, kind);
+    if (g.held) return { held: g.held, reason: g.reason };
+    if (g.deferred) {
+      if (kind === 'reply') await db.updateLead(lead.id, { reply_due_at: new Date(+now() + REPLY_RETRY_MS).toISOString(), reply_pending_since: lead.reply_pending_since || iso() });
+      return { deferred: g.deferred };
+    }
+  }
 
   // Runaway guard, not a conversation cap (Pierce, Nov 2 2026: "we need to respond to text and email effectively").
   // A buyer who keeps writing keeps getting answers; what's capped is messages they haven't answered, plus a high daily
@@ -226,7 +244,7 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
   }
 
   if (!email && !isTestLead(lead) && !inWindow(kind === 'reply' ? config.replyWindow : config.sendWindow)) {
-    if (kind === 'reply') return scheduleSend(lead, text, kind, onSend);
+    if (kind === 'reply') return scheduleSend(lead, text, kind, onSend, { meta });
     return { deferred: 'outside_window' };
   }
   // Human pacing for texts: never two bot texts seconds apart, and paced kinds (Pierce's A# answers) wait a random beat.
@@ -234,7 +252,7 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
     const sinceLast = lead.last_outbound_at ? (+now() - +new Date(lead.last_outbound_at)) / 1000 : Infinity;
     const delaySec = pace ? randSec(config.pace) : sinceLast < config.minGapSec ? randSec({ minSec: config.minGapSec, maxSec: config.minGapSec * 2.5 }) : 0;
     if (delaySec > 0) {
-      const s = await scheduleSend(lead, text, kind, onSend, { delaySec });
+      const s = await scheduleSend(lead, text, kind, onSend, { delaySec, meta });
       await audit('scheduled', { leadId: lead.id, detail: { kind, policy: key, send_at: s.scheduled } });
       return s;
     }
@@ -247,6 +265,10 @@ export async function deliver(lead, text, { kind, forceApproval = false, reason,
 // ---------- first touch ----------
 /** The email with the summary, listing page, flyer links and NDA link (first contact, or once a buyer texts their email). */
 export async function sendIntroEmail(lead, listing, { onSend = {} } = {}) {
+  // before the buyer deal: a seller or someone Pierce is already talking with gets no deal and no email
+  const g = await checkBeforeSend(lead, 'first_touch');
+  if (g.held) return { held: g.held, reason: g.reason };
+  if (g.deferred) return { deferred: g.deferred };
   await hubspot.ensureBuyerDeal(lead, listing);
   const links = await publicDocLinks(listing);
   const text = firstTouchText(lead, listing, { channel: 'email', links });
@@ -327,11 +349,16 @@ async function firstTouchStep(lead) {
   if (lead.next_action_at && new Date(lead.next_action_at) > now()) return { deferred: 'pacing', at: lead.next_action_at };
   if (!lead.phone) lead = await db.updateLead(lead.id, { preferred_channel: 'email' });
   if (lead.phone && (await db.isOptedOut(lead.phone))) { await setStatus(lead, 'opted_out'); return { skipped: 'opted_out' }; }
+  // contact awareness before anything is drafted: a seller, a booked meeting or Pierce already in touch -> no first touch
+  const g = await checkBeforeSend(lead, 'first_touch');
+  if (g.held) return { held: g.held, reason: g.reason };
+  if (g.deferred) { await db.updateLead(lead.id, { next_action_at: new Date(+now() + 30 * 60e3).toISOString() }); return { deferred: g.deferred }; }
   const listing = await getListing(lead);
 
   // step 1: email. first_email_at only when it really went to the buyer; raw.intro_email records what happened.
-  if (emailOn && !lead.first_email_at && !lead.raw?.intro_email) {
+  if (emailOn && !lead.first_email_at && (!lead.raw?.intro_email || lead.raw.intro_email === INTRO_PENDING_CHECK)) {
     const r = await sendIntroEmail(lead, listing, { onSend: lead.phone ? {} : { status: 'contacted' } });
+    if (r.held) return r; // the guard stepped back (lead muted, Pierce told)
     if (r.deferred) { await db.updateLead(lead.id, { next_action_at: new Date(+now() + 30 * 60e3).toISOString() }); return { email: r }; }
     if (!lead.phone && notSent(r)) return parkFirstTouch(lead, r, 'email');
     const outcome = { raw: { ...(lead.raw || {}), intro_email: introOutcome(r) }, ...(r.sent ? { first_email_at: iso() } : {}) };
@@ -356,6 +383,7 @@ async function firstTouchStep(lead) {
   // "Just sent you an email" only when the email really went out (a draft or a held email has not reached them)
   const text = firstTouchText(lead, listing, { channel: 'sms', afterEmail: !!lead.first_email_at });
   const r = await deliver(lead, text, { kind: 'first_touch', channel: 'sms', onSend: { status: 'contacted' }, quietFail: true });
+  if (r.held) return r;
   if (r.approval) await db.updateLead(lead.id, { status: 'awaiting_approval' });
   else if (r.deferred) await db.updateLead(lead.id, { next_action_at: new Date(+now() + 30 * 60e3).toISOString() });
   else if (r.scheduled) await db.updateLead(lead.id, { next_action_at: new Date(+new Date(r.scheduled) + 30 * 60e3).toISOString() }); // the queued text sets 'contacted'
@@ -375,7 +403,7 @@ export async function handleInboundSms(phone, text, rcMessageId) {
   if (unknown) lead = await db.insertLead({ phone, source: 'inbound_sms', status: 'human', auto_send: false });
   await db.insertMessage({ lead_id: lead.id, direction: 'in', body: text, status: 'received', rc_message_id: rcMessageId || null });
   await audit('received', { leadId: lead.id, detail: { chars: text.length } });
-  if (!MUTED.has(lead.status)) lead = await captureEmail(lead, text); // a muted thread never triggers the intro email
+  if (!isMuted(lead)) lead = await captureEmail(lead, text); // a muted thread never triggers the intro email
   await db.supersedeApprovalsForLead(lead.id); // drafts written before this reply are stale
   await db.cancelScheduledForLead(lead.id);
   lead = await db.updateLead(lead.id, { last_inbound_at: iso(), followup_count: 0 });
@@ -388,7 +416,7 @@ export async function handleInboundSms(phone, text, rcMessageId) {
     // carrier STOP keywords get an automatic confirmation; only confirm natural-language opt-outs
     if (opt !== 'keyword') {
       const body = "Understood, you won't get any more texts from us.";
-      try { await sendSms(phone, body); await db.insertMessage({ lead_id: lead.id, direction: 'out', body, status: 'sent', kind: 'opt_out_confirm' }); } catch { /* best effort */ }
+      try { const res = await sendSms(phone, body); await db.insertMessage({ lead_id: lead.id, direction: 'out', body, status: 'sent', kind: 'opt_out_confirm', rc_message_id: String(res?.id ?? '') }); } catch { /* best effort */ }
     }
     await hubspot.addNote(lead.id, `Opted out by text: "${text}"`);
     return { optedOut: opt };
@@ -401,7 +429,7 @@ export async function handleInboundSms(phone, text, rcMessageId) {
     await notifyOwner(`Text from ${phone} (not a lead, L${lead.id}): "${text}". The bot did NOT reply. If it's a buyer, text B${lead.id} and the bot takes it.`);
     return { forwarded: 'unknown_number' };
   }
-  if (MUTED.has(lead.status)) {
+  if (isMuted(lead)) {
     await notifyOwner(`${leadLabel(lead)} replied (your thread, bot muted): "${text}"`);
     return { forwarded: true };
   }
@@ -428,7 +456,7 @@ export async function handleInboundEmail(lead, { id, conversationId, subject, te
     await syncNextStep(lead.id);
     return { optedOut: opt };
   }
-  if (MUTED.has(lead.status)) {
+  if (isMuted(lead)) {
     await notifyOwner(`${leadLabel(lead)} emailed (your thread, bot muted): "${text.slice(0, 300)}"`);
     return { forwarded: true };
   }
@@ -453,8 +481,35 @@ async function captureEmail(lead, text) {
     await notifyOwner(`${leadLabel(lead)} sent their email (${found}). Email isn't connected yet, so send them the OM and info yourself.`);
     return db.updateLead(lead.id, { raw: { ...(lead.raw || {}), intro_email: 'pending: email not connected, Pierce sending by hand' } });
   }
+  return sendCapturedIntro(lead, listing);
+}
+
+/** intro_email while the contact check (HubSpot/RingCentral) is down: nothing went out, retried once it answers. */
+export const INTRO_PENDING_CHECK = 'pending: contact check';
+async function sendCapturedIntro(lead, listing) {
   const r = await sendIntroEmail(lead, listing);
-  return db.updateLead(lead.id, { first_email_at: iso(), raw: { ...(lead.raw || {}), intro_email: r.sent ? 'sent' : r.draft ? 'drafted' : r.approval ? 'waiting on Pierce' : 'not sent' } });
+  if (r.held) return db.getLead(lead.id); // the contact guard stepped back: the lead is muted now, nothing went out
+  if (r.deferred) {
+    // no first_email_at: the email has not gone, and a later outage must not treat this lead as already emailed
+    const fresh = (await db.getLead(lead.id)) || lead;
+    return db.updateLead(lead.id, { raw: { ...(fresh.raw || {}), intro_email: INTRO_PENDING_CHECK } });
+  }
+  const fresh = (await db.getLead(lead.id)) || lead;
+  return db.updateLead(lead.id, { first_email_at: iso(), raw: { ...(fresh.raw || {}), intro_email: r.sent ? 'sent' : r.draft ? 'drafted' : r.approval ? 'waiting on Pierce' : 'not sent' } });
+}
+
+/** The intro email a buyer asked for by texting their address, held while the contact check was down: try again. */
+export async function retryPendingIntroEmail(lead) {
+  if (!lead?.email || lead.first_email_at || lead.raw?.intro_email !== INTRO_PENDING_CHECK) return lead;
+  if (isMuted(lead) || config.email.mode === 'off') return lead;
+  return sendCapturedIntro(lead, await getListing(lead));
+}
+
+/** tick(): every lead with a held intro email gets another try (the contact guard decides whether it may go). */
+export async function retryPendingIntroEmails() {
+  for (const lead of await db.listLeadsAwaitingReply()) {
+    if (lead.raw?.intro_email === INTRO_PENDING_CHECK) await retryPendingIntroEmail(lead);
+  }
 }
 
 // ---------- human pacing ----------
@@ -481,7 +536,16 @@ export async function processDueReplies() {
 
 export async function respondNow(lead) {
   lead = await db.updateLead(lead.id, { reply_due_at: null, reply_pending_since: null });
-  if (MUTED.has(lead.status) || (await db.isOptedOut(lead.phone))) return { skipped: 'muted' };
+  if (isMuted(lead) || (await db.isOptedOut(lead.phone))) return { skipped: 'muted' };
+  // contact awareness before the model drafts anything (deliver() checks again; the lookup is cached)
+  const g = await checkBeforeSend(lead, 'reply');
+  if (g.held) return { skipped: 'contact_guard', reason: g.reason };
+  if (g.deferred) {
+    await db.updateLead(lead.id, { reply_due_at: new Date(+now() + REPLY_RETRY_MS).toISOString(), reply_pending_since: iso() });
+    return { deferred: g.deferred };
+  }
+  lead = await retryPendingIntroEmail(lead); // the intro email they asked for while the check was down
+  if (isMuted(lead)) return { skipped: 'contact_guard' };
   const listing = await getListing(lead);
   const messages = await db.listMessages(lead.id);
   const lastOutIdx = messages.map((m) => m.direction).lastIndexOf('out');
@@ -557,6 +621,7 @@ export async function applyDecision(lead, d, { inboundText = '', kind = 'reply',
   else if (d.action === 'escalate') nextStatus = 'escalated';
   else if (d.action === 'disqualify') nextStatus = 'disqualified';
   else if (d.qualified && ['engaged', 'contacted'].includes(lead.status)) nextStatus = 'qualified';
+  if (nextStatus === 'booked' && lead.raw?.booked_bot_ok) { const { booked_bot_ok: _ok, ...raw } = lead.raw; lead = await db.updateLead(lead.id, { raw }); } // booked again: Pierce's
   if (nextStatus && nextStatus !== lead.status) lead = await setStatus(lead, nextStatus);
 
   if (nextStatus) await audit('status', { leadId: lead.id, detail: { from: d._prevStatus, to: nextStatus, summary: d.summary } });
@@ -614,9 +679,12 @@ export async function applyDecision(lead, d, { inboundText = '', kind = 'reply',
   const human = needsHuman(inboundText);
   const r = await deliver(lead, d.reply_text, {
     kind, flags, decision: d, human, channel,
+    // the confirmation that comes with the booking still goes if it has to wait for the window (status is 'booked' now)
+    ...(nextStatus === 'booked' ? { meta: { booking_confirm: true } } : {}),
     attachments: flags.needsAttachment || [],
     reason: d.escalation_reason || (human ? 'sensitive topic (price/terms/legal)' : flags.usedSensitive ? 'answer uses sensitive docs (inspections/water/leases)' : undefined),
   });
+  if (r.held) return { action: d.action, ...r }; // the contact guard stepped back; no HubSpot writes for this thread
   if (flags.links?.length && (r.sent || r.scheduled)) await hubspot.addNote(lead.id, `Sent view-only link(s): ${flags.links.map((l) => l.doc).join(', ')}`);
   await syncNextStep(lead.id);
   return { action: d.action, ...r };
@@ -789,6 +857,8 @@ export async function runFollowups() {
       continue;
     }
     if (now() < plan.dueAt) continue;
+    // contact awareness before the call task and the draft: Pierce may have booked, texted or emailed them since
+    if (!(await checkBeforeSend(lead, 'followup')).ok) continue;
     // a quiet lead after the first touch gets a call task for Pierce (next business morning), plus the follow-up note
     if (n === 0 && lead.status !== 'nurture' && lead.phone) await callTask(lead, { key: 'no_reply', why: 'no reply to the first email/text yet', hot: false });
     const listing = await getListing(lead);
@@ -807,6 +877,7 @@ export async function runFollowups() {
       kind: 'followup', channel: plan.channel, flags: ctx.flags, attachments: ctx.flags.needsAttachment || [],
       reason: ctx.flags.usedSensitive ? 'follow-up uses sensitive docs or past correspondence' : undefined,
     });
+    if (r.held || r.deferred === 'contact_check_failed') continue; // contact guard: Pierce's now, or the check is down (retried next pass)
     if (r.sent || r.scheduled || r.draft) await db.updateLead(lead.id, { followup_count: n + 1, ...(r.draft || r.scheduled ? { last_outbound_at: iso() } : {}) });
     if (r.approval) await db.updateLead(lead.id, { followup_count: n + 1, last_outbound_at: iso() }); // don't re-draft every tick
     if (d.needs_call) await callTask(lead, { key: `call:${iso().slice(0, 10)}`, why: d.call_reason || 'a call is the right next step', hot: true, talkingPoints: d.call_talking_points });
@@ -817,6 +888,7 @@ export async function runFollowups() {
 }
 
 // ---------- scheduled sends ----------
+const BOT_KINDS = new Set(['first_touch', 'reply', 'followup']); // queued kinds the bot wrote itself (not A#/Y#/E#)
 let sendingScheduled = false; // both job loops call this; never let two passes send the same row
 export async function sendDueScheduled() {
   if (sendingScheduled) return;
@@ -830,7 +902,11 @@ async function sendDueScheduledOnce() {
   const sentNow = new Set();
   for (const m of await db.listDueScheduled()) {
     const lead = await db.getLead(m.lead_id);
-    if (!lead || (await db.isOptedOut(lead.phone)) || (MUTED.has(lead.status) && m.kind !== 'owner_edit' && m.kind !== 'approved')) {
+    // Pierce's own words (E#, Y#, A# answers) still go to a muted lead; so does the bot's confirmation of a booking it
+    // just made (queued for the reply window). Opt-outs always cancel.
+    const pierceOwn = ['owner_edit', 'approved', 'answer'].includes(m.kind);
+    const bookingConfirm = m.meta?.booking_confirm && lead?.status === 'booked'; // a guard step-back cancels the queue itself
+    if (!lead || (await db.isOptedOut(lead.phone)) || (isMuted(lead) && !pierceOwn && !bookingConfirm)) {
       await db.updateMessage(m.id, { status: 'cancelled' });
       continue;
     }
@@ -839,10 +915,16 @@ async function sendDueScheduledOnce() {
       await db.updateMessage(m.id, { send_at: new Date(+now() + randSec({ minSec: config.minGapSec, maxSec: config.minGapSec * 2.5 }) * 1000).toISOString() });
       continue;
     }
+    // a bot-written text queued for later is checked again when it goes: Pierce may have stepped in meanwhile
+    if (BOT_KINDS.has(m.kind)) {
+      const g = await checkBeforeSend(lead, m.kind);
+      if (g.held) { await db.updateMessage(m.id, { status: 'cancelled', meta: { ...(m.meta || {}), cancelled: `contact_guard:${g.reason}` } }); continue; }
+      if (g.deferred) { await db.updateMessage(m.id, { send_at: new Date(+now() + REPLY_RETRY_MS).toISOString() }); continue; }
+    }
     sentNow.add(lead.id);
     try {
-      await sendSms(lead.phone, m.body);
-      await db.updateMessage(m.id, { status: 'sent', meta: { ...(m.meta || {}), sent_at: iso() } });
+      const res = await sendSms(lead.phone, m.body);
+      await db.updateMessage(m.id, { status: 'sent', rc_message_id: String(res?.id ?? ''), meta: { ...(m.meta || {}), sent_at: iso() } });
       await db.updateLead(lead.id, { last_outbound_at: iso(), ...(m.meta?.on_send || {}) });
     } catch (e) {
       await db.updateMessage(m.id, { status: 'failed', meta: { ...(m.meta || {}), error: e.message } });

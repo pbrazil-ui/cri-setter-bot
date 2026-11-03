@@ -35,10 +35,17 @@ async function scopeAlert(e) {
   scopeAlerted.add(obj);
   await notifyOwner(`HubSpot refused the bot's ${obj} request (${e.status}). The "CRI Setter Bot" service key is missing a scope for ${obj}${obj === 'notes' || obj === 'tasks' ? ` (look for crm.objects.${obj}.write in the key's scope list)` : ''}. Leads still get answered; HubSpot logging for ${obj} is paused until it's added.`);
 }
-// Test leads (Pierce's own cell playing a buyer, owner TEST command) never touch HubSpot.
+/**
+ * A lead the contact guard found to be a seller in HubSpot (src/contactguard.js): the bot writes nothing to HubSpot for
+ * it, by any path (no contact fill-in, no buyer deal, no note, no task, no stage move). Cleared only when Pierce's B#
+ * finds no seller any more (contact_guard.cleared_at).
+ */
+export const isSellerLead = (lead) => lead?.raw?.contact_guard?.reason === 'seller' && !lead.raw.contact_guard.cleared_at;
+// Test leads (Pierce's own cell playing a buyer, owner TEST command) and sellers never touch HubSpot. The stored lead is
+// read so a caller's stale copy can't miss a seller flag set a moment ago.
 const skipTest = (fn) => async (x, ...rest) => {
-  const lead = x && typeof x === 'object' ? x : await db.getLead(x);
-  if (lead?.raw?.test) return null;
+  const lead = x && typeof x === 'object' ? ((x.id && (await db.getLead(x.id))) || x) : await db.getLead(x);
+  if (lead?.raw?.test || isSellerLead(lead)) return null;
   return fn(x, ...rest);
 };
 const safe = (fn) => async (...args) => {
@@ -51,6 +58,98 @@ const RANK = { [S.newBuyer]: 0, [S.qualified]: 1, [S.offerOut]: 2, [S.underContr
 const HUMAN_STAGES = new Set([S.offerOut, S.underContract, S.won]);
 // field writes (e.g. Next step) also stay off Closed Lost deals; stage moves follow decideStageMove
 const NO_FIELD_WRITES = new Set([...HUMAN_STAGES, S.lost]);
+
+/** Offer Out / Under Contract / Closed Won: Pierce owns the deal (non-negotiable 8). */
+export const isHumanStage = (stage) => HUMAN_STAGES.has(stage);
+
+// ---------- contact awareness (read-only lookups for src/contactguard.js) ----------
+// These THROW on errors (unlike the safe() writers below): the contact guard must know a lookup failed so it can fail
+// closed. They return null when HubSpot is off (no HUBSPOT_TOKEN), which the guard treats as "nothing known".
+export const CONTACT_GUARD_PROPS = ['firstname', 'lastname', 'email', 'phone', 'mobilephone', 'createdate', 'notes_last_contacted',
+  'notes_next_activity_date', 'engagements_last_meeting_booked', 'hs_latest_meeting_activity'];
+// HubSpot's search API allows a few requests per second per portal: one short wait and retry on a 429, so a burst of
+// first touches doesn't read as an outage
+async function lookup(method, path, body) {
+  try { return await api(method, path, body); } catch (e) {
+    if (e.status !== 429) throw e;
+    await new Promise((r) => setTimeout(r, 1100));
+    return api(method, path, body);
+  }
+}
+export const last10 = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : null; };
+
+/**
+ * Every HubSpot contact for this phone or email, duplicates included. Phones are stored in any format ("(916) 459-6179",
+ * "+19164596179", "916.459.6179"), so the search asks for tokens ending in the last 7 and the last 4 digits on phone AND
+ * mobilephone, and the results are kept only when the last 10 digits match exactly. Email: exact match.
+ */
+export async function findContactsFor({ phone, email } = {}) {
+  if (!enabled()) return null;
+  const d = last10(phone);
+  const mail = email ? String(email).trim().toLowerCase() : null;
+  const groups = [];
+  if (d) {
+    for (const prop of ['phone', 'mobilephone']) {
+      groups.push({ filters: [{ propertyName: prop, operator: 'CONTAINS_TOKEN', value: `*${d.slice(-7)}` }] });
+      groups.push({ filters: [{ propertyName: prop, operator: 'CONTAINS_TOKEN', value: `*${d.slice(-4)}` }] });
+    }
+  }
+  if (mail) groups.push({ filters: [{ propertyName: 'email', operator: 'EQ', value: mail }] });
+  if (!groups.length) return [];
+  const out = new Map();
+  let after; let pages = 0;
+  do {
+    const page = await lookup('POST', '/crm/v3/objects/contacts/search', { filterGroups: groups, properties: CONTACT_GUARD_PROPS, limit: 100, ...(after ? { after } : {}) });
+    for (const c of page?.results || []) {
+      const p = c.properties || {};
+      const phoneHit = d && [p.phone, p.mobilephone].some((x) => last10(x) === d);
+      const mailHit = mail && String(p.email || '').trim().toLowerCase() === mail;
+      if (phoneHit || mailHit) out.set(String(c.id), { id: String(c.id), properties: p, matched: phoneHit ? 'phone' : 'email' });
+    }
+    after = page?.paging?.next?.after;
+  } while (after && ++pages < 5);
+  return [...out.values()];
+}
+
+/** Every deal (any pipeline) associated with one contact: { id, name, pipeline, stage }. Read-only. */
+export async function dealsForContact(contactId) {
+  if (!enabled()) return null;
+  const page = await lookup('POST', '/crm/v3/objects/deals/search', {
+    filterGroups: [{ filters: [{ propertyName: 'associations.contact', operator: 'EQ', value: String(contactId) }] }],
+    properties: ['dealname', 'dealstage', 'pipeline'], limit: 100,
+  });
+  return (page?.results || []).map((x) => ({ id: String(x.id), name: x.properties?.dealname || '', pipeline: x.properties?.pipeline || null, stage: x.properties?.dealstage || null }));
+}
+
+/**
+ * Due times (hs_timestamp) of the bot's own call tasks, by task id. For tasks made before createTask recorded
+ * raw.bot_task_due: their due time is the contact's "next activity date", which the guard must not read as Pierce's.
+ * A task that no longer exists (404) is skipped. Read-only; throws on other errors.
+ */
+export async function taskDueTimes(ids) {
+  if (!enabled()) return null;
+  const out = [];
+  for (const id of ids) {
+    try {
+      const t = await lookup('GET', `/crm/v3/objects/tasks/${id}?properties=hs_timestamp`);
+      if (t?.properties?.hs_timestamp) out.push(String(t.properties.hs_timestamp));
+    } catch (e) { if (e.status !== 404) throw e; }
+  }
+  return out;
+}
+
+/** Stage of each of the bot's own buyer deals for this lead. A deal that no longer exists (404) is skipped. */
+export async function leadDealStages(lead) {
+  if (!enabled() || lead?.raw?.test) return [];
+  const out = [];
+  for (const id of Object.values(lead?.hubspot_deals || {}).filter(Boolean)) {
+    try {
+      const d = await lookup('GET', `/crm/v3/objects/deals/${id}?properties=dealstage,dealname`);
+      out.push({ id: String(id), name: d?.properties?.dealname || '', stage: d?.properties?.dealstage || null });
+    } catch (e) { if (e.status !== 404) throw e; }
+  }
+  return out;
+}
 
 const dealIdFor = async (lead) => {
   const listing = lead.listing_id ? await db.getListing(lead.listing_id) : null;
@@ -78,7 +177,11 @@ export const createTask = safe(skipTest(async (leadId, { key, subject, body, due
     },
     associations,
   });
-  await db.updateLead(leadId, { hubspot_tasks: { ...(lead.hubspot_tasks || {}), [key]: t.id } });
+  // the task's due time sets the contact's "next activity date": the contact guard must not read the bot's own
+  // reminders as a meeting Pierce booked, so their due times are kept on the lead
+  const fresh = (await db.getLead(leadId)) || lead;
+  const due = [...(fresh.raw?.bot_task_due || []), dueAt].slice(-20);
+  await db.updateLead(leadId, { hubspot_tasks: { ...(fresh.hubspot_tasks || {}), [key]: t.id }, raw: { ...(fresh.raw || {}), bot_task_due: due } });
   hubspotLog.push({ op: 'task', leadId, key, subject });
   return t.id;
 }));
@@ -235,12 +338,15 @@ async function ensureBuyerDealOnce(lead, listing) {
   return dealId;
 }
 
-/** Call after any lead status change. Moves the buyer deal per decideStageMove. */
-export const syncDealStage = safe(skipTest(async (leadId) => {
+/**
+ * Call after any lead status change. Moves the buyer deal per decideStageMove.
+ * create: false only moves a deal that already exists (the contact guard stepping back never opens a deal).
+ */
+export const syncDealStage = safe(skipTest(async (leadId, { create = true } = {}) => {
   const lead = await db.getLead(leadId);
   if (!lead) return null;
   const listing = lead.listing_id ? await db.getListing(lead.listing_id) : null;
-  const dealId = lead.hubspot_deals?.[dealKey(lead, listing)] || (await ensureBuyerDeal(lead, listing));
+  const dealId = lead.hubspot_deals?.[dealKey(lead, listing)] || (create ? await ensureBuyerDeal(lead, listing) : null);
   if (!dealId) return null;
   const deal = await api('GET', `/crm/v3/objects/deals/${dealId}?properties=dealstage`);
   const move = decideStageMove(deal?.properties?.dealstage, lead.status);

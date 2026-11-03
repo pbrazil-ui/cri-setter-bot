@@ -1,8 +1,14 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
+import { now } from './clock.js';
 
 export const mockOutbox = []; // used in SMS_MODE=mock and tests
 export const mockSmsFailures = new Map(); // SMS_MODE=mock only: phone -> error message the send throws (tests)
+// SMS_MODE=mock only: the fake RingCentral message store the contact guard reads (tests). Records use RingCentral's shape:
+// { id, direction: 'Outbound', creationTime, to: [{ phoneNumber }], subject }. Empty = Pierce texted no one.
+// recordSends: true also files every mock send in it (as RingCentral does), so tests can check bot sends are recognized.
+export const mockRcMessageStore = [];
+export const mockRcStore = { error: null, recordSends: false };
 
 const EVENT_FILTER = '/restapi/v1.0/account/~/extension/~/message-store/instant?type=SMS';
 let platformPromise = null;
@@ -22,6 +28,7 @@ export async function sendSms(to, text) {
     if (mockSmsFailures.has(to)) throw new Error(mockSmsFailures.get(to));
     const id = `mock-${mockOutbox.length + 1}`;
     mockOutbox.push({ id, to, text });
+    if (mockRcStore.recordSends) mockRcMessageStore.push({ id, direction: 'Outbound', type: 'SMS', creationTime: now().toISOString(), to: [{ phoneNumber: to }], subject: text });
     if (process.env.NODE_ENV !== 'test') console.log(`[mock sms -> ${to}] ${text}`);
     return { id };
   }
@@ -32,6 +39,32 @@ export async function sendSms(to, text) {
     text,
   });
   return res.json();
+}
+
+const last10 = (p) => String(p || '').replace(/\D/g, '').slice(-10);
+/**
+ * Read-only: outbound texts from this extension (Pierce's RingCentral line) to `phone` since `sinceIso`, newest first.
+ * The contact guard compares them with the bot's own sends to see whether Pierce is texting this person himself.
+ * Throws on errors (the guard fails closed).
+ */
+export async function listOutboundSms(phone, sinceIso) {
+  const want = last10(phone);
+  if (!want) return [];
+  const mine = (r) => r.direction === 'Outbound' && (r.to || []).some((t) => last10(t.phoneNumber) === want) && String(r.creationTime || '') >= sinceIso;
+  if (config.smsMode === 'mock') {
+    if (mockRcStore.error) throw new Error(mockRcStore.error);
+    return mockRcMessageStore.filter(mine).sort((a, b) => String(b.creationTime).localeCompare(String(a.creationTime)));
+  }
+  const p = await platform();
+  const out = [];
+  for (let page = 1; page <= 5; page++) {
+    const r = await (await p.get('/restapi/v1.0/account/~/extension/~/message-store', {
+      messageType: 'SMS', direction: 'Outbound', phoneNumber: phone, dateFrom: sinceIso, perPage: 100, page,
+    })).json();
+    out.push(...(r.records || []).filter(mine));
+    if (!r.navigation?.nextPage) break;
+  }
+  return out;
 }
 
 /** Create or renew the webhook subscription for inbound SMS. Run on boot and every 12h. */
